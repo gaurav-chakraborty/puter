@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -101,18 +101,26 @@ const TabAccount = {
             h += '</div>';
         }
 
-        // Auth token card
+        // API token card
         h += '<div class="dashboard-card dashboard-settings-card">';
         h += '<div class="dashboard-settings-card-content">';
         h += '<div class="dashboard-settings-card-icon">';
         h += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>';
         h += '</div>';
         h += '<div class="dashboard-settings-card-info">';
-        h += `<strong>${i18n('auth_token')}</strong>`;
-        h += `<span>${i18n('copy_token_description')}</span>`;
+        h += `<strong>${i18n('api_token')}</strong>`;
+        h += `<span>${i18n('api_token_description')}</span>`;
         h += '</div>';
         h += '</div>';
-        h += `<button class="button copy-auth-token">${i18n('copy') || 'Copy'}</button>`;
+        if ( window.user?.email_confirmed ) {
+            h += `<button class="button copy-auth-token">${i18n('create_token')}</button>`;
+        } else {
+            // Disabled buttons have `pointer-events: none`, so the tooltip
+            // lives on a wrapping span that still receives hover.
+            h += `<span title="${html_encode(i18n('verify_email_to_create_token'))}" style="cursor: not-allowed;">`;
+            h += `<button class="button copy-auth-token" disabled>${i18n('create_token')}</button>`;
+            h += '</span>';
+        }
         h += '</div>';
 
         // Danger zone
@@ -173,14 +181,17 @@ const TabAccount = {
         });
         $el_window.find('.dashboard-section-account .copy-auth-token').on('click', function (e) {
             UIWindowCopyToken({
+                show_close_button: true,
                 show_header: true,
                 window_options: {
                     parent_uuid: $el_window.attr('data-element_uuid'),
                     backdrop: true,
-                    close_on_backdrop_click: false,
+                    close_on_backdrop_click: true,
                     parent_center: true,
                     stay_on_top: true,
-                    has_head: true,
+                    has_head: false,
+                    is_draggable: false,
+                    draggable_body: false,
                 },
             });
         });
@@ -233,8 +244,8 @@ const TabAccount = {
                     canvas.height = 150;
                     ctx.drawImage(img, 0, 0, 150, 150);
                     const base64data = canvas.toDataURL('image/png');
-                    // update profile picture
-                    $el_window.find('.dashboard-profile-avatar').css('background-image', `url(${ html_encode(base64data) })`);
+                    // update profile picture everywhere (matches helpers.js session refresh)
+                    $('.profile-pic').css('background-image', `url(${ html_encode(base64data) })`);
                     $('.profile-image').css('background-image', `url(${ html_encode(base64data) })`);
                     $('.profile-image').addClass('profile-image-has-picture');
                     // update profile picture

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -18,109 +18,16 @@
  */
 
 import UIAlert from '../UI/UIAlert.js';
-import UIWindowShare from '../UI/UIWindowShare.js';
-import UIWindowPublishWebsite from '../UI/UIWindowPublishWebsite.js';
+
 import UIWindowItemProperties from '../UI/UIWindowItemProperties.js';
 import UIWindowSaveAccount from '../UI/UIWindowSaveAccount.js';
 import UIWindowEmailConfirmationRequired from '../UI/UIWindowEmailConfirmationRequired.js';
 import UIWindowPublishWorker from '../UI/UIWindowPublishWorker.js';
+import publish_as_website from './publish_as_website.js';
 import open_item from './open_item.js';
 import launch_app from './launch_app.js';
 import path from '../lib/path.js';
-import mime from '../lib/mime.js';
-
-const AI_APP_NAME = 'ai';
-
-/**
- * Parses item metadata for AI payload
- * @param {string} metadata - JSON string of metadata
- * @returns {Object|undefined} Parsed metadata or undefined
- */
-const parseItemMetadataForAI = (metadata) => {
-    if ( ! metadata ) {
-        return undefined;
-    }
-    try {
-        return JSON.parse(metadata);
-    } catch ( error ) {
-        console.warn('Failed to parse item metadata for AI payload.', error);
-        return undefined;
-    }
-};
-
-/**
- * Builds AI payload from item elements
- * @param {jQuery} $elements - jQuery collection of elements
- * @returns {Array} Array of item data for AI
- */
-const buildAIPayloadFromItems = ($elements) => {
-    return $elements.get().map((element) => {
-        const $element = $(element);
-        return {
-            uid: $element.attr('data-uid'),
-            path: $element.attr('data-path'),
-            name: $element.attr('data-name'),
-            is_dir: $element.attr('data-is_dir') === '1',
-            is_shortcut: $element.attr('data-is_shortcut') === '1',
-            shortcut_to: $element.attr('data-shortcut_to') || undefined,
-            shortcut_to_path: $element.attr('data-shortcut_to_path') || undefined,
-            size: $element.attr('data-size') || undefined,
-            type: $element.attr('data-type') || undefined,
-            modified: $element.attr('data-modified') || undefined,
-            metadata: parseItemMetadataForAI($element.attr('data-metadata')),
-        };
-    });
-};
-
-/**
- * Ensures AI app iframe is available
- * @returns {Promise<HTMLIFrameElement|null>} AI app iframe or null
- */
-const ensureAIAppIframe = async () => {
-    let $aiWindow = $(`.window[data-app="${AI_APP_NAME}"]`);
-    if ( $aiWindow.length === 0 ) {
-        try {
-            await launch_app({ name: AI_APP_NAME });
-        } catch ( error ) {
-            console.error('Failed to launch AI app.', error);
-            return null;
-        }
-        $aiWindow = $(`.window[data-app="${AI_APP_NAME}"]`);
-    }
-
-    if ( $aiWindow.length === 0 ) {
-        return null;
-    }
-
-    $aiWindow.makeWindowVisible();
-    const iframe = $aiWindow.find('.window-app-iframe').get(0);
-    return iframe ?? null;
-};
-
-/**
- * Sends selection to AI app
- * @param {jQuery} $elements - jQuery collection of elements
- */
-const sendSelectionToAIApp = async ($elements) => {
-    const items = buildAIPayloadFromItems($elements);
-    if ( items.length === 0 ) {
-        return;
-    }
-
-    const aiIframe = await ensureAIAppIframe();
-    if ( !aiIframe || !aiIframe.contentWindow ) {
-        await UIAlert({
-            message: i18n('ai_app_unavailable'),
-        });
-        return;
-    }
-
-    aiIframe.contentWindow.postMessage({
-        msg: 'ai:openFsEntries',
-        items,
-        source: 'desktop-context-menu',
-    }, '*');
-};
+import { isWeblinkName, weblinkChangeIconMenuItem } from './weblink.js';
 
 /**
  * Generates context menu items for file/folder operations
@@ -133,6 +40,7 @@ const sendSelectionToAIApp = async ($elements) => {
  * @param {Array} options.suggested_apps - Optional pre-loaded suggested apps
  * @param {string} options.associated_app_name - Optional associated app
  * @param {Function} options.onOpen - Optional custom open handler (used by Dashboard)
+ * @param {Function} options.onShowProperties - Optional custom properties handler (used by Dashboard); receives {name, path, uid, element}
  * @returns {Promise<Array>} Array of context menu items
  */
 const generate_file_context_menu = async function (options) {
@@ -144,8 +52,8 @@ const generate_file_context_menu = async function (options) {
     const is_trashed = options.is_trashed ?? false;
     const is_worker = options.is_worker ?? false;
     const onOpen = options.onOpen;
-
-    const is_shared_with_me = (fsentry.path !== `/${window.user.username}` && !fsentry.path.startsWith(`/${window.user.username}/`));
+    const is_weblink = isWeblinkName(fsentry.name ?? $(el_item).attr('data-name'));
+    const is_shortcut = fsentry.is_shortcut || !! $(el_item).attr('data-shortcut_to_path');
 
     let menu_items = [];
 
@@ -186,71 +94,6 @@ const generate_file_context_menu = async function (options) {
     }
 
     // -------------------------------------------
-    // Open in New Window
-    // (only if the item is on a window)
-    // -------------------------------------------
-    if ( $(el_item).closest('.window-body').length > 0 && fsentry.is_dir ) {
-        menu_items.push({
-            html: i18n('open_in_new_window'),
-            onClick: function () {
-                if ( fsentry.is_dir ) {
-                    open_item({ item: el_item, new_window: true });
-                }
-            },
-        });
-
-        // -------------------------------------------
-        // Separator
-        // -------------------------------------------
-        if ( !is_trash && !is_trashed && fsentry.is_dir ) {
-            menu_items.push('-');
-        }
-    }
-
-    // -------------------------------------------
-    // Share With…
-    // -------------------------------------------
-    if ( !is_trashed && !is_trash ) {
-        menu_items.push({
-            html: i18n('Share With…'),
-            onClick: async function () {
-                if ( window.user.is_temp &&
-                    !await UIWindowSaveAccount({
-                        send_confirmation_code: true,
-                        message: 'Please create an account to proceed.',
-                        window_options: {
-                            backdrop: true,
-                            close_on_backdrop_click: false,
-                        },
-                    }) ) {
-                    return;
-                }
-                else if ( !window.user.email_confirmed && !await UIWindowEmailConfirmationRequired() ) {
-                    return;
-                }
-
-                const icon = $(el_item).find('.icon img').attr('src') || $(el_item).find('img').attr('src');
-                UIWindowShare([{
-                    uid: $(el_item).attr('data-uid'),
-                    path: $(el_item).attr('data-path'),
-                    name: $(el_item).attr('data-name'),
-                    icon: icon,
-                }]);
-            },
-        });
-
-        // -------------------------------------------
-        // Open in AI
-        // -------------------------------------------
-        menu_items.push({
-            html: i18n('open_in_ai'),
-            onClick: async function () {
-                await sendSelectionToAIApp($(el_item));
-            },
-        });
-    }
-
-    // -------------------------------------------
     // Publish As Website
     // -------------------------------------------
     if ( !is_trashed && !is_trash && fsentry.is_dir ) {
@@ -258,23 +101,11 @@ const generate_file_context_menu = async function (options) {
             html: i18n('publish_as_website'),
             disabled: !fsentry.is_dir || fsentry.has_website,
             onClick: async function () {
-                if ( window.require_email_verification_to_publish_website ) {
-                    if ( window.user.is_temp &&
-                        !await UIWindowSaveAccount({
-                            send_confirmation_code: true,
-                            message: 'Please create an account to proceed.',
-                            window_options: {
-                                backdrop: true,
-                                close_on_backdrop_click: false,
-                            },
-                        }) ) {
-                        return;
-                    }
-                    else if ( !window.user.email_confirmed && !await UIWindowEmailConfirmationRequired() ) {
-                        return;
-                    }
-                }
-                UIWindowPublishWebsite(fsentry.uid, $(el_item).attr('data-name'), $(el_item).attr('data-path'));
+                await publish_as_website({
+                    uid: fsentry.uid,
+                    name: $(el_item).attr('data-name'),
+                    path: $(el_item).attr('data-path'),
+                });
             },
         });
     }
@@ -360,96 +191,6 @@ const generate_file_context_menu = async function (options) {
     }
 
     // -------------------------------------------
-    // Set as Wallpaper
-    // -------------------------------------------
-    const mime_type = mime.getType($(el_item).attr('data-name')) ?? 'application/octet-stream';
-    if ( !window.dashboard_object && !is_trashed && !is_trash && !fsentry.is_dir && mime_type.startsWith('image/') ) {
-        menu_items.push({
-            html: i18n('set_as_background'),
-            onClick: async function () {
-                const read_url = await puter.fs.sign(undefined, { uid: $(el_item).attr('data-uid'), action: 'read' });
-                window.set_desktop_background({
-                    url: read_url.items.read_url,
-                    fit: window.desktop_bg_fit,
-                });
-                try {
-                    $.ajax({
-                        url: `${window.api_origin}/set-desktop-bg`,
-                        type: 'POST',
-                        data: JSON.stringify({
-                            url: window.desktop_bg_url,
-                            color: window.desktop_bg_color,
-                            fit: window.desktop_bg_fit,
-                        }),
-                        async: true,
-                        contentType: 'application/json',
-                        headers: {
-                            'Authorization': `Bearer ${window.auth_token}`,
-                        },
-                        statusCode: {
-                            401: function () {
-                                window.logout();
-                            },
-                        },
-                    });
-                } catch ( err ) {
-                    // Ignore
-                }
-            },
-        });
-    }
-
-    // -------------------------------------------
-    // Zip
-    // -------------------------------------------
-    if ( !is_trash && !is_trashed && !$(el_item).attr('data-path').endsWith('.zip') ) {
-        menu_items.push({
-            html: i18n('zip'),
-            onClick: function () {
-                window.zipItems(el_item, path.dirname($(el_item).attr('data-path')), false);
-            },
-        });
-    }
-
-    // -------------------------------------------
-    // Unzip
-    // -------------------------------------------
-    if ( !is_trash && !is_trashed && $(el_item).attr('data-path').endsWith('.zip') ) {
-        menu_items.push({
-            html: i18n('unzip'),
-            onClick: async function () {
-                let filePath = $(el_item).attr('data-path');
-                window.unzipItem(filePath);
-            },
-        });
-    }
-
-    // -------------------------------------------
-    // Tar
-    // -------------------------------------------
-    if ( !is_trash && !is_trashed && !$(el_item).attr('data-path').endsWith('.tar') ) {
-        menu_items.push({
-            html: i18n('tar'),
-            onClick: function () {
-                window.tarItems(el_item, path.dirname($(el_item).attr('data-path')), false);
-            },
-        });
-    }
-
-    // -------------------------------------------
-    // Untar
-    // -------------------------------------------
-    if ( !is_trash && !is_trashed && $(el_item).attr('data-path').endsWith('.tar') ) {
-        menu_items.push({
-            html: i18n('untar'),
-            onClick: async function () {
-                let filePath = $(el_item).attr('data-path');
-                window.untarItem(filePath);
-            },
-        });
-    }
-
-    // -------------------------------------------
     // Restore
     // -------------------------------------------
     if ( is_trashed ) {
@@ -471,7 +212,7 @@ const generate_file_context_menu = async function (options) {
     // -------------------------------------------
     // Cut
     // -------------------------------------------
-    if ( $(el_item).attr('data-immutable') === '0' && !is_shared_with_me ) {
+    if ( $(el_item).attr('data-immutable') === '0' ) {
         menu_items.push({
             html: i18n('cut'),
             onClick: function () {
@@ -524,7 +265,7 @@ const generate_file_context_menu = async function (options) {
     // -------------------------------------------
     if ( !is_trashed && window.feature_flags.create_shortcut ) {
         menu_items.push({
-            html: is_shared_with_me ? i18n('create_desktop_shortcut') : i18n('create_shortcut'),
+            html: i18n('create_shortcut'),
             onClick: async function () {
                 let base_dir = path.dirname($(el_item).attr('data-path'));
                 // Trash on Desktop is a special case
@@ -532,22 +273,29 @@ const generate_file_context_menu = async function (options) {
                     base_dir = window.desktop_path;
                 }
 
-                if ( is_shared_with_me ) base_dir = window.desktop_path;
-
-                window.create_shortcut(path.basename($(el_item).attr('data-path')),
-                                fsentry.is_dir,
-                                base_dir,
-                                null, // appendTo - will be determined by create_shortcut
-                                fsentry.shortcut_to === '' ? fsentry.uid : fsentry.shortcut_to,
-                                fsentry.shortcut_to_path === '' ? fsentry.path : fsentry.shortcut_to_path);
+                window.create_shortcut(
+                    path.basename($(el_item).attr('data-path')),
+                    fsentry.is_dir,
+                    base_dir,
+                    null, // appendTo - will be determined by create_shortcut
+                    fsentry.shortcut_to === '' ? fsentry.uid : fsentry.shortcut_to,
+                    fsentry.shortcut_to_path === '' ? fsentry.path : fsentry.shortcut_to_path,
+                );
             },
         });
     }
 
     // -------------------------------------------
+    // Change Web Link Icon
+    // -------------------------------------------
+    if ( !is_trashed && !is_trash && !is_shortcut && is_weblink ) {
+        menu_items.push(weblinkChangeIconMenuItem(el_item));
+    }
+
+    // -------------------------------------------
     // Delete
     // -------------------------------------------
-    if ( $(el_item).attr('data-immutable') === '0' && !is_trashed && !is_shared_with_me ) {
+    if ( $(el_item).attr('data-immutable') === '0' && !is_trashed ) {
         menu_items.push({
             html: i18n('delete'),
             onClick: async function () {
@@ -578,17 +326,7 @@ const generate_file_context_menu = async function (options) {
 
                 if ( (alert_resp) === 'Delete' ) {
                     await window.delete_item(el_item);
-                    // check if trash is empty
-                    const trash = await puter.fs.stat({ path: window.trash_path, consistency: 'eventual' });
-                    // update other clients
-                    if ( window.socket ) {
-                        window.socket.emit('trash.is_empty', { is_empty: trash.is_empty });
-                    }
-                    // update this client
-                    if ( trash.is_empty ) {
-                        $(`.item[data-path="${window.trash_path}" i], .item[data-shortcut_to_path="${window.trash_path}" i]`).find('.item-icon > img').attr('src', window.icons['trash.svg']);
-                        $(`.window[data-path="${window.trash_path}"]`).find('.window-head-icon').attr('src', window.icons['trash.svg']);
-                    }
+                    await window.refresh_trash_state();
                 }
             },
         });
@@ -617,6 +355,18 @@ const generate_file_context_menu = async function (options) {
     menu_items.push({
         html: i18n('properties'),
         onClick: function () {
+            // The Dashboard swaps in its own responsive modal via this hook;
+            // everywhere else falls back to the desktop properties window.
+            if ( options.onShowProperties ) {
+                options.onShowProperties({
+                    name: $(el_item).attr('data-name'),
+                    path: $(el_item).attr('data-path'),
+                    uid: $(el_item).attr('data-uid'),
+                    element: el_item,
+                });
+                return;
+            }
+
             let window_height = 500;
             let window_width = 450;
 
@@ -626,13 +376,15 @@ const generate_file_context_menu = async function (options) {
             let top = $(el_item).position().top + $(el_item).height();
             top = top > (window.innerHeight - (window_height + window.taskbar_height + window.toolbar_height)) ? (window.innerHeight - (window_height + window.taskbar_height + window.toolbar_height)) : top;
 
-            UIWindowItemProperties($(el_item).attr('data-name'),
-                            $(el_item).attr('data-path'),
-                            $(el_item).attr('data-uid'),
-                            left,
-                            top,
-                            window_width,
-                            window_height);
+            UIWindowItemProperties(
+                $(el_item).attr('data-name'),
+                $(el_item).attr('data-path'),
+                $(el_item).attr('data-uid'),
+                left,
+                top,
+                window_width,
+                window_height,
+            );
         },
     });
 
@@ -669,7 +421,7 @@ async function generateOpenWithItems (el_item, fsentry, suggested_apps) {
                 continue;
             }
             items.push({
-                html: suggested_app.title,
+                html: html_encode(suggested_app.title),
                 icon: `<img src="${html_encode(suggested_app.icon ?? window.icons['app.svg'])}" style="width:16px; height: 16px; margin-bottom: -4px;">`,
                 onClick: async function () {
                     var extension = path.extname($(el_item).attr('data-path')).toLowerCase();

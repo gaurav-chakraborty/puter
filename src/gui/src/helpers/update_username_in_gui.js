@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -18,6 +18,10 @@
  */
 
 const update_username_in_gui = function (new_username) {
+    // ------------------------------------------------------------
+    // Flush cache
+    // ------------------------------------------------------------
+    puter._cache.flushall();
     // ------------------------------------------------------------
     // Update all item/window/... paths, with the new username
     // ------------------------------------------------------------

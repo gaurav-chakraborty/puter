@@ -27,13 +27,15 @@ A string containing the prompt you want to complete.
 
 An object containing the following properties:
 
-- `model` (String) - The model you want to use for the completion. If not specified, defaults to `gpt-5-nano`. More than 500 models are available, including, but not limited to, OpenAI, Anthropic, Google, xAI, Mistral, OpenRouter, and DeepSeek. For a full list, see the [AI models list](https://developer.puter.com/ai/models/) page.
+- `model` (String) - The model you want to use for the completion. If not specified, defaults to `gpt-5-nano`. More than 500 models are available from vendors including OpenAI, Anthropic, Google, Alibaba Cloud, xAI, Mistral, OpenRouter, Infron, and others. For a full list, see the [AI models list](https://developer.puter.com/ai/models/) page.
+- `provider` (String) (Optional) - Pin the request to a specific vendor, for example `openrouter` or `infron`. Without it, Puter selects a vendor for the requested model. Call [`puter.ai.listModelProviders()`](/AI/listModelProviders) for the available values, and [`puter.ai.listModels(provider)`](/AI/listModels) for the models a given vendor serves.
 - `stream` (Boolean) - A boolean indicating whether you want to stream the completion. Defaults to `false`.
 - `max_tokens` (Number) - The maximum number of tokens to generate in the completion. By default, the specific model's maximum is used.
 - `temperature` (Number) - A number between 0 and 2 indicating the randomness of the completion. Lower values make the output more focused and deterministic, while higher values make it more random. By default, the specific model's temperature is used.
 - `tools` (Array) (Optional) - Function definitions the AI can call. See [Function Calling](#function-calling) for details.
 - `reasoning_effort` / `reasoning.effort` (String) (Optional) - Controls how much effort reasoning models spend thinking. Supported values: `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. Lower values give faster responses with less reasoning. OpenAI models only.
-- `text` / `text_verbosity` (String) (Optional) - Controls how long or short responses are. Supported values: `low`, `medium`, and `high`. Lower values give shorter responses. OpenAI models only.
+- `verbosity` / `text.verbosity` (String) (Optional) - Controls how long or short responses are. Supported values: `low`, `medium`, and `high`. Lower values give shorter responses. OpenAI models only.
+- `compaction` (Boolean | Object) (Optional) - Opt into inline context compaction for long conversations. Pass `true` to enable it with provider defaults, or `{ trigger_tokens: number }` to set the token threshold at which earlier context is summarized. When the model compacts, you receive a `compaction` chunk while streaming (or a `compaction` field on the result when not streaming) containing an opaque `encrypted_content` summary. Resend that item in `messages` on the next turn in place of the summarized history. The compaction chunk shape is identical across providers, so the same code works whether `model` is an OpenAI or Anthropic model. See [Compaction](#compaction).
 
 #### `testMode` (Boolean) (Optional)
 
@@ -110,7 +112,7 @@ In case of an error, the `Promise` will reject with an error message.
 
 ## Vendors
 
-We use different vendors for different models and try to use the best vendor available at the time of the request. Vendors include, but are not limited to, OpenAI, Anthropic, Google, xAI, Mistral, OpenRouter, and DeepSeek.
+We use different vendors for different models and try to use the best vendor available at the time of the request. Vendors currently include Alibaba Cloud, Anthropic, Azure OpenAI, DeepSeek, Google, Infron, MiniMax, Mistral, Moonshot AI, OpenAI, OpenRouter, Together AI, xAI, and Z.AI. Call [`puter.ai.listModelProviders()`](/AI/listModelProviders) for the current list, or pass `provider` in the options object to pin a request to one of them.
 
 ## Function Calling
 
@@ -152,7 +154,7 @@ Pass in the `tools` parameter with the type of `web_search`.
 
 ```js
 {
-  model: 'openai/gpt-5.2-chat',
+  model: 'openai/gpt-5.3-chat',
   tools: [{type: "web_search"}]
 }
 ```
@@ -182,6 +184,206 @@ Pass in the `cache_control` parameter inside the object in the `messages` array.
 ```
 
 You can find the implementation in our [prompt caching example](/playground/ai-claude-cache-control/). Find more details about cache control in [Anthropic documentation](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+
+## Compaction
+
+For long, multi-turn conversations that you keep on the client, enable
+`compaction` so the model can summarize earlier context before it overflows the
+context window. When it fires, the model summarizes the older turns into a single
+**compaction artifact** and answers from that summary instead of the full
+history — so the request stays small.
+
+You get the artifact back as a `compaction` item (a stream chunk when streaming,
+or `result.compaction` when not). On the next turn you carry it forward **as the
+first block of the assistant turn that produced it**, together with that turn's
+reply text — the artifact stands in for the older turns it summarized, and the
+recent exchange is preserved. The item shape is the same across providers, so the
+same code works for OpenAI and Anthropic models.
+
+#### Enabling it
+
+Pass `compaction` in the options object:
+
+- `compaction: true` — enable with provider defaults.
+- `compaction: { trigger_tokens: 60000 }` — set the token threshold at which the
+  model compacts.
+
+The artifact is `{ type: 'compaction', id, encrypted_content }`. `encrypted_content`
+is an opaque payload; treat it as a black box and just carry it forward.
+
+#### Streaming
+
+```js
+const resp = await puter.ai.chat(messages, {
+    model: 'gpt-5.5',                       // or 'claude-opus-4-8' — same code
+    stream: true,
+    compaction: { trigger_tokens: 60000 },
+});
+
+let text = '';
+let compaction = null;
+for await ( const part of resp ) {
+    if ( part.type === 'text' )             text += part.text;
+    else if ( part.type === 'compaction' )  compaction = part;                 // { type, id, encrypted_content }
+    else if ( part.type === 'error' )       console.error('stream error:', part.message);
+}
+
+// Next turn: rebuild the assistant turn from the compaction artifact + the reply
+// text it came with (artifact first), then add the new user message. The artifact
+// replaces the older compacted turns; the recent exchange is kept. Keep
+// compaction enabled so it can compact again later.
+if ( compaction ) {
+    const next = await puter.ai.chat(
+        [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            {
+                role: 'assistant',
+                content: [ compaction, { type: 'text', text } ],
+            },
+            { role: 'user', content: 'now compare the two approaches' },
+        ],
+        { model: 'gpt-5.5', stream: true, compaction: true }
+    );
+    for await ( const part of next ) {
+        if ( part.type === 'text' ) document.write(part.text);
+    }
+}
+```
+
+#### Non-streaming
+
+```js
+const result = await puter.ai.chat(messages, {
+    model: 'gpt-5.5',
+    compaction: { trigger_tokens: 60000 },
+});
+console.log(result.message.content);
+
+if ( result.compaction ) {
+    // result.compaction is { type: 'compaction', id, encrypted_content } — the
+    // same item you get from the stream. Rebuild the assistant turn from it plus
+    // the reply text (artifact first), then add the new user message:
+    const next = await puter.ai.chat(
+        [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            {
+                role: 'assistant',
+                content: [
+                    result.compaction,
+                    { type: 'text', text: result.message.content },
+                ],
+            },
+            { role: 'user', content: 'now compare the two approaches' },
+        ],
+        { model: 'gpt-5.5', compaction: true }
+    );
+    console.log(next.message.content);
+}
+```
+
+#### Notes
+
+- **Keep `compaction` enabled on every turn** of the conversation so it can
+  compact again as the conversation keeps growing.
+- **Carry the artifact as the first block of its assistant turn**, alongside that
+  turn's reply text, then continue with new turns. The artifact replaces the older
+  compacted turns; don't drop the recent exchange.
+- **It only fires once the context is large enough.** Anthropic models require a
+  minimum threshold of **50,000 tokens**, and the conversation must actually
+  exceed your `trigger_tokens`. OpenAI models don't enforce that floor, so they
+  can compact smaller conversations. If nothing compacts, your input was below
+  the threshold.
+- **Handle the `error` chunk** when streaming — provider errors (e.g. a
+  `trigger_tokens` below a provider's minimum) arrive as an `error` chunk, not a
+  thrown exception.
+
+## Image Generation (Gemini Image Models)
+
+Certain Gemini models can generate and edit images as part of a chat conversation. These models accept text and image inputs, and return text and images in the response.
+
+#### Supported Models
+
+| Model | Quality Levels |
+|-------|---------------|
+| `gemini-2.5-flash-image` | — |
+| `gemini-3-pro-image-preview` | `1K`, `2K`, `4K` |
+| `gemini-3.1-flash-image-preview` | `512`, `1K`, `2K`, `4K` |
+
+#### Options
+
+Pass `image_config` in the options object to control image output:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `image_config.aspect_ratio` | `String` | Aspect ratio (e.g. `"16:9"`, `"1:1"`, `"9:16"`) |
+| `image_config.image_size` | `String` | Output quality/resolution. Must be one of the model's supported quality levels |
+
+For available aspect ratios and image sizes per model, see the [Gemini Image Generation documentation](https://ai.google.dev/gemini-api/docs/image-generation#aspect_ratios_and_image_size).
+
+#### Response Format
+
+The response includes an `images` array on the message when the model generates images:
+
+```js
+{
+    message: {
+        role: "assistant",
+        content: "Here is your image.",
+        images: [
+            {
+                type: "image_url",
+                image_url: { url: "data:image/png;base64,..." }
+            }
+        ]
+    }
+}
+```
+
+#### Multi-Turn Image Editing
+
+You can send generated images back in the conversation to iteratively edit them. Include the image in an `assistant` message using the `image_url` content type, and pass the `thoughtSignature` from the previous response to maintain editing context:
+
+```js
+const previousImage = result.message.images[0].image_url.url;
+const thoughtSignature = result.message.images[0].thoughtSignature;
+
+const result2 = await puter.ai.chat([
+    { role: "user", content: "Create an infographic about photosynthesis" },
+    { role: "assistant", content: [
+        { type: "text", text: "Here is the infographic." },
+        { type: "image_url", image_url: { url: previousImage }, thoughtSignature },
+    ]},
+    { role: "user", content: "Translate all text to Spanish" },
+], {
+    model: "gemini-3.1-flash-image-preview",
+    image_config: { aspect_ratio: "16:9", image_size: "2K" },
+});
+
+const editedImage = result2.message.images[0].image_url.url;
+```
+
+The code implementation is available in our [image generation example](/playground/ai-image-chat/) and [multi-turn image editing example](/playground/ai-image-edit/).
+
+#### Streaming
+
+Image generation works with `stream: true`. Image chunks arrive as `image` events:
+
+```js
+const resp = await puter.ai.chat("Draw a cat", {
+    model: "gemini-3.1-flash-image-preview",
+    stream: true,
+});
+
+for await (const part of resp) {
+    if (part.text) console.log(part.text);
+    if (part.image) {
+        // part.image is { type: "image_url", image_url: { url: "data:..." } }
+        const img = document.createElement("img");
+        img.src = part.image.image_url.url;
+        document.body.appendChild(img);
+    }
+}
+```
 
 ## Examples
 
@@ -241,7 +443,7 @@ You can find the implementation in our [prompt caching example](/playground/ai-c
     <script src="https://js.puter.com/v2/"></script>
     <script>
     (async () => {
-        const resp = await puter.ai.chat('Tell me in detail what Rick and Morty is all about.', {model: 'gemini-2.5-flash-lite', stream: true });
+        const resp = await puter.ai.chat('Tell me in detail what Rick and Morty is all about.', {model: 'gemini-3.1-flash-lite', stream: true });
         for await ( const part of resp ) document.write(part?.text.replaceAll('\n', '<br>'));
     })();
     </script>
@@ -401,7 +603,7 @@ You can find the implementation in our [prompt caching example](/playground/ai-c
         puter.print(`Loading...`);
         puter.ai
             .chat("Summarize what the User-Pays Model is: https://docs.puter.com/user-pays-model/", {
-                model: "openai/gpt-5.2-chat",
+                model: "openai/gpt-5.3-chat",
                 tools: [{ type: "web_search" }],
             })
             .then(puter.print);
@@ -442,7 +644,7 @@ Policy 8 - Account Management: Each Enterprise and Ultimate customer is assigned
                     },
                     { role: "user", content: question },
                 ],
-                { model: "claude-sonnet-4-5" }
+                { model: "claude-sonnet-4-6" }
             );
             return response.message.content[0].text;
         }
@@ -460,6 +662,83 @@ Policy 8 - Account Management: Each Enterprise and Ultimate customer is assigned
             const r3 = await askQuestion("What is your data retention policy?");
             puter.print(r3 + "<br><br>");
         })();
+    </script>
+</body>
+</html>
+```
+
+<strong class="example-title">Image Generation</strong>
+
+```html;ai-image-chat
+<html>
+<body>
+    <script src="https://js.puter.com/v2/"></script>
+    <script>
+    (async () => {
+        puter.print("Generating image...<br>");
+        const result = await puter.ai.chat("Draw a cute cat wearing a top hat", {
+            model: "gemini-3.1-flash-image-preview",
+        });
+        puter.print(result.message.content + "<br>");
+        if (result.message.images?.length > 0) {
+            const img = document.createElement("img");
+            img.src = result.message.images[0].image_url.url;
+            img.style.maxWidth = "512px";
+            document.body.appendChild(img);
+        }
+    })();
+    </script>
+</body>
+</html>
+```
+
+<strong class="example-title">Multi-Turn Image Editing</strong>
+
+```html;ai-image-edit
+<html>
+<body>
+    <script src="https://js.puter.com/v2/"></script>
+    <script>
+    (async () => {
+        const model = "gemini-3.1-flash-image-preview";
+
+        // Step 1: Generate initial image
+        puter.print("Step 1: Generating infographic...<br>");
+        const r1 = await puter.ai.chat("Create a simple infographic about photosynthesis", {
+            model,
+            image_config: { image_size: "1K" },
+        });
+        const img1 = r1.message.images?.[0]?.image_url?.url;
+        const thoughtSignature1 = r1.message.images?.[0]?.thoughtSignature;
+        if (img1) {
+            const el = document.createElement("img");
+            el.src = img1;
+            el.style.maxWidth = "512px";
+            document.body.appendChild(el);
+        }
+
+        // Step 2: Edit the image in a follow-up turn
+        puter.print("<br>Step 2: Translating to Spanish...<br>");
+        const r2 = await puter.ai.chat([
+            { role: "user", content: "Create a simple infographic about photosynthesis" },
+            { role: "assistant", content: [
+                { type: "text", text: r1.message.content },
+                { type: "image_url", image_url: { url: img1 }, thoughtSignature: thoughtSignature1 },
+            ]},
+            { role: "user", content: "Translate all text to Spanish. Keep everything else the same." },
+        ], {
+            model,
+            image_config: { aspect_ratio: "16:9", image_size: "2K" },
+        });
+        const img2 = r2.message.images?.[0]?.image_url?.url;
+        if (img2) {
+            const el = document.createElement("img");
+            el.src = img2;
+            el.style.maxWidth = "512px";
+            document.body.appendChild(el);
+        }
+        puter.print("<br>Done!");
+    })();
     </script>
 </body>
 </html>
@@ -581,7 +860,7 @@ Policy 8 - Account Management: Each Enterprise and Ultimate customer is assigned
                             }
                         ]
                     }
-                ], { model: 'claude-sonnet-4', stream: true });
+                ], { model: 'claude-sonnet-4-6', stream: true });
 
                 let text = '';
 

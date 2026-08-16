@@ -4,13 +4,8 @@ description: Connect to a peer server using an invite code.
 platforms: [websites, apps]
 ---
 
-<div class="alpha-notice-banner">
-    <span class="alpha-notice-label">Alpha</span>
-    <span class="alpha-notice-text">The Peer API is in alpha. Expect breaking changes, and please report issues you encounter.</span>
-</div>
-<div class="alpha-notice-spacer"></div>
 
-Connects to a peer server and returns a `PuterPeerConnection` instance.
+Connects to a peer server and returns a [`PuterPeerConnection`](/Objects/puterpeerconnection/) instance.
 
 <div class="info">
 
@@ -36,20 +31,11 @@ A string invite code created by `puter.peer.serve()`.
 `options` is an object with the following properties:
 
 - `iceServers` (`RTCIceServer[]`) Custom ICE servers (STUN/TURN) to use instead of the Puter-managed relays.
+- `forceRelay` (`boolean`) Whether to force connections to route through a relay instead of attempting peer-to-peer (default). Metering charges may apply.
 
 ## Return value
 
-A `Promise` that resolves to a `PuterPeerConnection` instance.
-
-### `PuterPeerConnection` methods and events
-
-- `send(data)` - Send a message to the peer. Supports strings, `Blob`, `ArrayBuffer`, or `ArrayBufferView`.
-- `close(reason)` - Close the connection.
-- `owner` (`object`) - Information about the user who created the server.
-- `open` event: Fired when the data channel is ready.
-- `message` event: Fired when a message is received (`event.data`).
-- `close` event: Fired when the connection closes (`event.reason`).
-- `error` event: Fired when a connection error occurs (`event.error`).
+A `Promise` that resolves to a [`PuterPeerConnection`](/Objects/puterpeerconnection/) instance, which carries `send()` and `close()` methods and the `open`, `message`, `close`, and `error` events.
 
 ## Example
 

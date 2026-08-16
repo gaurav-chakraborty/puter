@@ -35,7 +35,11 @@ An object with the following optional properties:
 - `pattern` (String): Same as the `pattern` parameter.
 - `returnValues` (Boolean): Same as the `returnValues` parameter.
 - `limit` (Number): Maximum number of items to return in a single call.
-- `cursor` (String): A pagination cursor from a previous call.
+- `cursor` (String): A pagination cursor from a previous call. Pass the `cursor` value returned by the previous page to fetch the next one.
+- `offset` (Number): Skips the given number of items before the page starts. Not recommended — requests get slower and more expensive the larger the offset; prefer `cursor`. Maximum `5000`, and cannot be combined with `cursor`.
+- `includeTotal` (Boolean): If `true`, the result includes a `total` count of every item matching the query (across all pages). The count is metered and its cost grows with the size of your store — request it once (on the first page) and avoid it in hot paths. If you only need to know whether more pages exist, check for `cursor` instead of counting.
+- `fetchUntilFull` (Boolean): A page can come back with fewer than `limit` items even when more exist (for example when expired keys are excluded). If `true`, the page is filled up to `limit` items when possible. Requires `limit`.
+- `stream` (Boolean): If `true`, the method returns an async iterator of [`KVListPage`](/Objects/kvlistpage) objects instead of a promise, for use with `for await ... of`. Combine with `limit` to control the page size, or `cursor` to resume from a previous page. Cannot be combined with `offset`. With `includeTotal`, only the first page carries `total`.
 
 ## Return value
 
@@ -43,9 +47,23 @@ A `Promise` that will resolve to either:
 
 - An array of all keys the user has for the current app, or
 - An array of [`KVPair`](/Objects/kvpair) objects containing the user's key-value pairs for the current app, or
-- A [`KVListPage`](/Objects/kvlistpage) object when using `limit` or `cursor` in `options`
+- A [`KVListPage`](/Objects/kvlistpage) object when using any of `limit`, `cursor`, `offset`, `includeTotal`, or `fetchUntilFull` in `options`
 
 If the user has no keys, the array will be empty.
+
+When paginating, iterate until the result has no `cursor` — a page may hold fewer than `limit` items while more pages still exist.
+
+Full (non-paginated) listings keep resolving to a plain array, so existing code is unaffected — under the hood the SDK now fetches them page by page. They still read the entire store, though: every page is metered, so on large stores a bare `list()` gets slow and costly (the SDK logs a one-time console warning when a full listing spans multiple pages). Prefer `stream: true` or explicit `limit`/`cursor` pages, and narrow the scan with a `pattern`.
+
+With `stream: true`, the method returns an async iterator of [`KVListPage`](/Objects/kvlistpage) objects instead:
+
+```js
+for await (const page of puter.kv.list({ pattern: 'log:*', stream: true })) {
+    for (const key of page.items) {
+        console.log(key);
+    }
+}
+```
 
 ## Examples
 
@@ -86,22 +104,49 @@ If the user has no keys, the array will be empty.
 
 <strong class="example-title">Paginate results with a cursor</strong>
 
-```html
+```html;kv-list-pagination
 <html>
 <body>
     <script src="https://js.puter.com/v2/"></script>
     <script>
         (async () => {
-            const firstPage = await puter.kv.list({ limit: 2 });
-            puter.print(`First page: ${firstPage.items}<br>`);
-
-            if (firstPage.cursor) {
-                const secondPage = await puter.kv.list({ cursor: firstPage.cursor });
-                puter.print(`Second page: ${secondPage.items}<br>`);
+            // Create sample data
+            for (let i = 1; i <= 6; i++) {
+                await puter.kv.set(`item-${i}`, `value-${i}`);
             }
+            puter.print('Created 6 key-value pairs<br><br>');
+
+            // Paginate with cursor (2 items per page)
+            let currentCursor = undefined;
+            let page = 1;
+            do {
+                const result = await puter.kv.list({
+                    limit: 2,
+                    returnValues: true,
+                    cursor: currentCursor,
+                });
+                const items = result.items;
+                puter.print(`<b>Page ${page}:</b><br>`);
+                for (const item of items) {
+                    puter.print(`  ${item.key} => ${item.value}<br>`);
+                }
+                puter.print('<br>');
+                currentCursor = result.cursor;
+                page++;
+            } while (currentCursor);
+
+            puter.print('Done paginating.<br><br>');
+
+            // Cleanup
+            for (let i = 1; i <= 6; i++) {
+                await puter.kv.del(`item-${i}`);
+            }
+            puter.print('Cleaned up sample data.');
         })();
     </script>
 </body>
+</html>
+
 ```
 
 <strong class="example-title">Sort keys lexicographically</strong>
@@ -161,6 +206,73 @@ If the user has no keys, the array will be empty.
             await puter.kv.del('item:002');
             await puter.kv.del('item:010');
             await puter.kv.del('item:100');
+        })();
+    </script>
+</body>
+</html>
+```
+
+<strong class="example-title">Design keys for query-like filtering with prefix patterns</strong>
+
+```html;kv-prefix-patterns
+<html>
+<body>
+    <script src="https://js.puter.com/v2/"></script>
+    <script>
+        (async () => {
+            const orders = [
+                { id: '0001', status: 'pending', customer: 'alice', total: 48 },
+                { id: '0002', status: 'shipped', customer: 'alice', total: 72 },
+                { id: '0003', status: 'pending', customer: 'bob', total: 15 },
+            ];
+
+            // In KV, key design is your query plan.
+            // We store the same order under multiple prefixes so each read path
+            // becomes a simple prefix query with puter.kv.list().
+            for (const order of orders) {
+                await puter.kv.set(`demo:order:by-id:${order.id}`, order);
+                await puter.kv.set(`demo:order:by-status:${order.status}:${order.id}`, order);
+                await puter.kv.set(`demo:order:by-customer:${order.customer}:${order.id}`, order);
+                await puter.kv.set(`demo:order:by-status-customer:${order.status}:${order.customer}:${order.id}`, order);
+            }
+
+            puter.print('<b>Stored read paths</b><br>');
+            puter.print('demo:order:by-status:pending:*<br>');
+            puter.print('demo:order:by-customer:alice:*<br>');
+            puter.print('demo:order:by-status-customer:pending:alice:*<br><br>');
+
+            const pendingOrders = await puter.kv.list('demo:order:by-status:pending:*', true);
+            puter.print('<b>Query: status = pending</b><br>');
+            pendingOrders.forEach(({ key, value }) => {
+                puter.print(`${key} => ${value.customer} ($${value.total})<br>`);
+            });
+            puter.print('<br>');
+
+            const aliceOrders = await puter.kv.list('demo:order:by-customer:alice:*', true);
+            puter.print('<b>Query: customer = alice</b><br>');
+            aliceOrders.forEach(({ key, value }) => {
+                puter.print(`${key} => ${value.status} ($${value.total})<br>`);
+            });
+            puter.print('<br>');
+
+            const alicePendingOrders = await puter.kv.list('demo:order:by-status-customer:pending:alice:*', true);
+            puter.print('<b>Query: status = pending AND customer = alice</b><br>');
+            alicePendingOrders.forEach(({ key, value }) => {
+                puter.print(`${key} => order ${value.id} ($${value.total})<br>`);
+            });
+            puter.print('<br>');
+
+            puter.print('<b>Takeaway</b><br>');
+            puter.print('With puter.kv.list(), filtering comes from key prefixes.<br>');
+            puter.print('If you need another query path, add another prefix-friendly key.<br><br>');
+
+            // Cleanup
+            for (const order of orders) {
+                await puter.kv.del(`demo:order:by-id:${order.id}`);
+                await puter.kv.del(`demo:order:by-status:${order.status}:${order.id}`);
+                await puter.kv.del(`demo:order:by-customer:${order.customer}:${order.id}`);
+                await puter.kv.del(`demo:order:by-status-customer:${order.status}:${order.customer}:${order.id}`);
+            }
         })();
     </script>
 </body>

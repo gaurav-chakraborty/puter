@@ -1,5 +1,6 @@
-import path from '../../lib/path.js';
-import io from '../../lib/socket.io/socket.io.esm.min.js';
+import path from 'path-browserify';
+import { io } from 'socket.io-client';
+import { PuterModule } from '../../lib/PuterModule.js';
 import * as utils from '../../lib/utils.js';
 
 // Constants
@@ -9,7 +10,6 @@ const LAST_VALID_TS = 'last_valid_ts';
 
 // Operations
 import FSItem from '../FSItem.js';
-import Batch from './Batch.js';
 import copy from './operations/copy.js';
 import deleteFSEntry from './operations/deleteFSEntry.js';
 import getReadURL from './operations/getReadUrl.js';
@@ -23,11 +23,19 @@ import revokeReadURL from './operations/revokeReadUrl.js';
 import sign from './operations/sign.js';
 import space from './operations/space.js';
 import stat from './operations/stat.js';
-import symlink from './operations/symlink.js';
-import upload from './operations/upload.js';
+import upload from './operations/upload/index.js';
 import write from './operations/write.js';
 
-export class PuterJSFileSystemModule {
+/**
+ * The Cloud Storage API. Lets you store and manage files and directories in
+ * the cloud.
+ *
+ * Operation implementations live under `operations/` as `this`-context
+ * functions whose JSDoc (including the per-form `@overload` declarations) is
+ * the source of truth for the public signatures — `types/` is generated from
+ * it, never edited by hand.
+ */
+export class PuterJSFileSystemModule extends PuterModule {
 
     space = space;
     mkdir = mkdir;
@@ -41,7 +49,6 @@ export class PuterJSFileSystemModule {
     move = move;
     write = write;
     sign = sign;
-    symlink = symlink;
     getReadURL = getReadURL;
     revokeReadURL = revokeReadURL;
     readdir = readdir;
@@ -51,33 +58,18 @@ export class PuterJSFileSystemModule {
     FSItem = FSItem;
 
     /**
-     * Creates a new instance with the given authentication token, API origin, and app ID,
-     * and connects to the socket.
+     * Connects the socket used for cache invalidation and upload progress.
+     * Unlike the request-based modules, the socket carries the token from the
+     * moment it connects, so it has to be rebuilt whenever auth state changes.
      *
-     * @class
-     * @param {string} authToken - Token used to authenticate the user.
-     * @param {string} APIOrigin - Origin of the API server. Used to build the API endpoint URLs.
-     * @param {string} appID - ID of the app to use.
+     * @param {import('../../index.js').Puter} puter
      */
     constructor (puter) {
-        this.puter = puter;
-        this.Batch = Batch(puter);
-        this.authToken = puter.authToken;
-        this.APIOrigin = puter.APIOrigin;
-        this.appID = puter.appID;
+        super(puter);
         this.cacheUpdateTimer = null;
         // Connect socket.
         this.initializeSocket();
-
-        // We need to use `Object.defineProperty` instead of passing
-        // `authToken` and `APIOrigin` because they will change.
-        const api_info = {};
-        Object.defineProperty(api_info, 'authToken', {
-            get: () => this.authToken,
-        });
-        Object.defineProperty(api_info, 'APIOrigin', {
-            get: () => this.APIOrigin,
-        });
+        puter.onAuthStateChanged(() => this.onAuthStateChanged());
     }
 
     /**
@@ -135,32 +127,26 @@ export class PuterJSFileSystemModule {
 
         this.socket.on('item.renamed', (item) => {
             puter._cache.flushall();
-            console.log('Flushed cache for item.renamed');
         });
 
         this.socket.on('item.removed', (item) => {
             // check original_client_socket_id and if it matches this.socket.id, don't invalidate cache
             puter._cache.flushall();
-            console.log('Flushed cache for item.removed');
         });
 
         this.socket.on('item.added', (item) => {
             // remove readdir cache for parent
             puter._cache.del(`readdir:${ path.dirname(item.path)}`);
-            console.log(`deleted cache for readdir:${ path.dirname(item.path)}`);
             // remove item cache for parent directory
             puter._cache.del(`item:${ path.dirname(item.path)}`);
-            console.log(`deleted cache for item:${ path.dirname(item.path)}`);
         });
 
         this.socket.on('item.updated', (item) => {
             puter._cache.flushall();
-            console.log('Flushed cache for item.updated');
         });
 
         this.socket.on('item.moved', (item) => {
             puter._cache.flushall();
-            console.log('Flushed cache for item.moved');
         });
 
         this.socket.on('connect', () => {
@@ -214,15 +200,13 @@ export class PuterJSFileSystemModule {
     }
 
     /**
-     * Sets a new authentication token and resets the socket connection with the updated token.
+     * Reconnects the socket against the current token and API origin. Called
+     * by the SDK whenever either changes.
      *
-     * @param {string} authToken - The new authentication token.
      * @memberof [FileSystem]
      * @returns {void}
      */
-    setAuthToken (authToken) {
-        this.authToken = authToken;
-
+    onAuthStateChanged () {
         // Check cache timestamp and purge if needed (only in GUI environment)
         if ( this.puter.env === 'gui' ) {
             this.checkCacheAndPurge();
@@ -230,20 +214,6 @@ export class PuterJSFileSystemModule {
             this.startCacheUpdateTimer();
         }
 
-        // reset socket
-        this.initializeSocket();
-    }
-
-    /**
-     * Sets the API origin and resets the socket connection with the updated API origin.
-     *
-     * @param {string} APIOrigin - The new API origin.
-     * @memberof [Apps]
-     * @returns {void}
-     */
-    setAPIOrigin (APIOrigin) {
-        this.APIOrigin = APIOrigin;
-        // reset socket
         this.initializeSocket();
     }
 
@@ -297,7 +267,6 @@ export class PuterJSFileSystemModule {
             const localValidTs = parseInt(localStorage.getItem(LAST_VALID_TS)) || 0;
 
             if ( serverTimestamp - localValidTs > 2000 ) {
-                console.log('Cache is not up to date, purging cache');
                 // Server has newer data, purge local cache
                 puter._cache.flushall();
                 localStorage.setItem(LAST_VALID_TS, '0');
@@ -321,10 +290,11 @@ export class PuterJSFileSystemModule {
             return;
         }
 
-        // Clear any existing timer
-        // this.stopCacheUpdateTimer();
+        // The auth token is set more than once over a session, and each call
+        // lands here; without clearing first, every call would leave another
+        // interval running.
+        this.stopCacheUpdateTimer();
 
-        // Start new timer
         this.cacheUpdateTimer = setInterval(() => {
             localStorage.setItem(LAST_VALID_TS, Date.now().toString());
         }, 1000);
@@ -343,3 +313,20 @@ export class PuterJSFileSystemModule {
         }
     }
 }
+
+/**
+ * The public face of the module: derived from the class, with the internal
+ * `puter` handle, the socket plumbing, and the legacy `authToken` accessor
+ * omitted.
+ *
+ * @typedef {import('../../lib/types.js').OmitMembers<
+ *     typeof PuterJSFileSystemModule,
+ *     'puter' | 'authToken'
+ *     | 'socket' | 'cacheUpdateTimer'
+ *     | 'initializeSocket' | 'shouldUseSocketAutoUnref' | 'bindSocketEvents'
+ *     | 'onAuthStateChanged' | 'invalidateCache'
+ *     | 'startCacheUpdateTimer' | 'stopCacheUpdateTimer'
+ * >} FSConstructor
+ */
+
+export const FS = /** @type {FSConstructor} */ (PuterJSFileSystemModule);

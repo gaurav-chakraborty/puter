@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -191,7 +191,13 @@ async function UIWindowNewPassword (options) {
                     });
                 },
                 error: function (err) {
-                    $(el_window).find('.form-error-msg').html(html_encode(err.responseText));
+                    const errorText = err.responseText || '';
+                    let msg = errorText;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        msg = errorJson.message || errorJson.error || errorText;
+                    } catch (_) { /* not JSON, use responseText */ }
+                    $(el_window).find('.form-error-msg').html(html_encode(msg));
                     $(el_window).find('.form-error-msg').fadeIn();
                 },
             });

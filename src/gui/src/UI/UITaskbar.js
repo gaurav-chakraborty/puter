@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -32,15 +32,15 @@ async function UITaskbar (options) {
 
     // if first visit ever, set taskbar position to left
     if ( window.first_visit_ever ) {
-        puter.kv.set('taskbar_position', 'left');
+        puter.kv.set('taskbar_position', 'left').catch(err => console.warn('Could not save taskbar_position:', err));
         taskbar_position = 'left';
     } else {
-        taskbar_position = await puter.kv.get('taskbar_position');
+        taskbar_position = await puter.kv.get('taskbar_position').catch(() => null);
         // if this is not first visit, set taskbar position to bottom since it's from a user that
         // used puter before customizing taskbar position was added and the taskbar position was set to bottom
         if ( ! taskbar_position ) {
             taskbar_position = 'bottom'; // default position
-            puter.kv.set('taskbar_position', taskbar_position);
+            puter.kv.set('taskbar_position', taskbar_position).catch(err => console.warn('Could not save taskbar_position:', err));
         }
     }
 
@@ -90,6 +90,7 @@ async function UITaskbar (options) {
             // skip if popover already open
             if ( $(item).hasClass('has-open-popover') )
             {
+                $('.popover-launcher').remove();
                 return;
             }
 
@@ -499,7 +500,7 @@ window.update_taskbar_position = async function (new_position) {
     }
 
     // Store the new position
-    puter.kv.set('taskbar_position', new_position);
+    puter.kv.set('taskbar_position', new_position).catch(err => console.warn('Could not save taskbar_position:', err));
     window.taskbar_position = new_position;
 
     // Remove old position classes and add new one

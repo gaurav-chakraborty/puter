@@ -4,13 +4,8 @@ description: Create a peer server and generate an invite code.
 platforms: [websites, apps]
 ---
 
-<div class="alpha-notice-banner">
-    <span class="alpha-notice-label">Alpha</span>
-    <span class="alpha-notice-text">The Peer API is in alpha. Expect breaking changes, and please report issues you encounter.</span>
-</div>
-<div class="alpha-notice-spacer"></div>
 
-Creates a peer server and returns a `PuterPeerServer` instance. The server will generate an invite code that other clients can use to connect.
+Creates a peer server and returns a [`PuterPeerServer`](/Objects/puterpeerserver/) instance. The server will generate an invite code that other clients can use to connect.
 
 <div class="info">
 
@@ -32,18 +27,11 @@ const server = await puter.peer.serve(options);
 `options` is an object with the following properties:
 
 - `iceServers` (`RTCIceServer[]`) Custom ICE servers (STUN/TURN) to use instead of the Puter-managed relays.
+- `forceRelay` (`boolean`) Whether to force connections to route through a relay instead of attempting peer-to-peer (default). Metering charges will increase.
 
 ## Return value
 
-A `Promise` that resolves to a `PuterPeerServer` instance.
-
-### `PuterPeerServer` properties and events
-
-- `inviteCode` (`string`) The code you share with other clients.
-- `connections` (`Map<string, PuterPeerConnection>`) map of all connected clients
-- `connection` event: Fired when a client connects.
-  - `event.conn` (`PuterPeerConnection`) The connection to the client.
-  - `event.user` (`object`) Metadata about the connecting user (if available).
+A `Promise` that resolves to a [`PuterPeerServer`](/Objects/puterpeerserver/) instance, which carries the `inviteCode` to share, the `connections` map of connected clients, and a `connection` event fired as each client joins.
 
 ## Example
 

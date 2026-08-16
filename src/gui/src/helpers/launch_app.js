@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -20,6 +20,7 @@
 import path from '../lib/path.js';
 import { PROCESS_IPC_ATTACHED, PROCESS_RUNNING, PortalProcess, PseudoProcess } from '../definitions.js';
 import UIWindow from '../UI/UIWindow.js';
+import { starts_hidden } from './starts_hidden.js';
 
 const normalizePrivateAccessDecision = (privateAccess) => {
     if ( !privateAccess || typeof privateAccess !== 'object' ) {
@@ -52,8 +53,9 @@ const getLaunchResult = (launchOutcome) => {
     return null;
 };
 
-const endLaunchTransaction = (transaction) => {
+const endLaunchTransaction = (transaction, outcome) => {
     if ( transaction ) {
+        if ( outcome ) transaction.annotate({ outcome });
         transaction.end();
     }
 };
@@ -115,12 +117,46 @@ const fetchUserAppTokenForLaunch = async ({ appUid } = {}) => {
  */
 const launch_app = async (options) => {
     let transaction;
+    // Ends once the app signals over IPC, i.e. when it can actually be used.
+    // Only apps built on the SDK ever signal, so this one is deliberately
+    // left unended (and therefore unreported) for the rest — better a series
+    // that covers fewer launches than one padded with timeouts.
+    let interactiveTransaction;
     // A transaction to trace the time it takes to launch an app and
     // for it to be ready.
     // Explorer is a special case, it's not an app per se, so it doesn't need a transaction.
     if ( options?.name !== 'explorer' ) {
-        transaction = new window.Transaction('app-is-ready');
+        // Attribute the timing: the same span covers a tile click on a warm
+        // dashboard and a cold landing on /app/<name>, which are different
+        // enough that a combined percentile describes neither.
+        const launchAttributes = {
+            'launch.app': options?.name ?? options?.app_obj?.name ?? 'unknown',
+            'launch.dashboard_mode': !! window.is_dashboard_mode,
+            // url_paths has the `/desktop` prefix stripped, so this counts the
+            // desktop-booted landing (`/desktop/app/<name>`) as the app URL
+            // it is.
+            'launch.from_app_url':
+                window.url_paths?.[0]?.toLocaleLowerCase() === 'app'
+                && !! window.url_paths?.[1],
+            'launch.has_app_obj': !! options?.app_obj,
+        };
+        // Exec-service launches never get the IPC listener attached below,
+        // so no interactive span is expected for them. Recording that here
+        // gives the interactive series a denominator: how many launches
+        // could have produced one.
+        const ipcTracked = ! options?.launched_by_exec_service;
+
+        transaction = new window.Transaction('app-is-ready', {
+            ...launchAttributes,
+            'launch.ipc_tracked': ipcTracked,
+        });
         transaction.start();
+
+        if ( ipcTracked ) {
+            interactiveTransaction = new window.Transaction(
+                'app-interactive', launchAttributes);
+            interactiveTransaction.start();
+        }
     }
 
     const uuid = options.uuid ?? window.uuidv4();
@@ -154,6 +190,9 @@ const launch_app = async (options) => {
 
     // If no `options.name` is provided, use the app name from the app_info
     options.name = options.name ?? app_info.name;
+    const resolvedAppName = { 'launch.app': options.name ?? 'unknown' };
+    transaction?.annotate(resolvedAppName);
+    interactiveTransaction?.annotate(resolvedAppName);
     const requestedAppName = options.privateLaunchRequestedAppName ?? options.name ?? app_info.name ?? null;
     const privateAccessDecision = normalizePrivateAccessDecision(app_info.privateAccess);
 
@@ -191,18 +230,20 @@ const launch_app = async (options) => {
                 fallbackLaunchOutcome.launchResult = redirectedLaunchResult;
             }
 
-            endLaunchTransaction(transaction);
+            endLaunchTransaction(transaction, 'redirected-to-fallback');
             return fallbackLaunchOutcome ?? { launchResult: redirectedLaunchResult };
         }
 
-        const deniedAppTitle = app_info.title ?? app_info.name ?? options.name ?? 'this app';
-        const safeDeniedAppTitle = window.html_encode
-            ? window.html_encode(deniedAppTitle)
-            : deniedAppTitle;
-        if ( typeof window.UIAlert === 'function' ) {
-            await window.UIAlert(`You don't have access to ${safeDeniedAppTitle}.`);
-        } else {
-            window.alert(`You don't have access to ${deniedAppTitle}.`);
+        if ( ! options?.silent_on_failure ) {
+            const deniedAppTitle = app_info.title ?? app_info.name ?? options.name ?? 'this app';
+            const safeDeniedAppTitle = window.html_encode
+                ? window.html_encode(deniedAppTitle)
+                : deniedAppTitle;
+            if ( typeof window.UIAlert === 'function' ) {
+                await window.UIAlert(`You don't have access to ${safeDeniedAppTitle}.`);
+            } else {
+                window.alert(`You don't have access to ${deniedAppTitle}.`);
+            }
         }
 
         const deniedLaunchResult = {
@@ -215,7 +256,7 @@ const launch_app = async (options) => {
             deniedPrivateAccess: true,
             privateAccess: privateAccessDecision,
         };
-        endLaunchTransaction(transaction);
+        endLaunchTransaction(transaction, 'denied-private-access');
         return { launchResult: deniedLaunchResult };
     }
 
@@ -255,6 +296,16 @@ const launch_app = async (options) => {
     // maximize on start
     //-----------------------------------
     if ( app_info.maximize_on_start ) {
+        options.maximized = 1;
+    }
+    // Dashboard mode: apps are full-tab experiences (headless chrome,
+    // control drawer, tile/Back switching), so every app launch defaults
+    // to maximized — matching tile launches. Without this, an app launched
+    // by another app (puter.ui.launchApp) opened as a floating titlebar
+    // window over the full-tab parent, with no tile to switch back to.
+    // Explorer keeps its windowed form; an explicit option still wins.
+    if ( window.is_dashboard_mode && options.maximized === undefined
+        && options.name !== 'explorer' && options.name !== 'trash' ) {
         options.maximized = 1;
     }
     //-----------------------------------
@@ -453,14 +504,18 @@ const launch_app = async (options) => {
                     tokenResult,
                 });
 
-                const tokenErrorAppTitle = app_info?.title ?? app_info?.name ?? options?.name ?? 'this app';
-                const safeTokenErrorAppTitle = window.html_encode
-                    ? window.html_encode(tokenErrorAppTitle)
-                    : tokenErrorAppTitle;
-                if ( typeof window.UIAlert === 'function' ) {
-                    await window.UIAlert(`Couldn't open ${safeTokenErrorAppTitle}. Please try again.`);
-                } else {
-                    window.alert(`Couldn't open ${tokenErrorAppTitle}. Please try again.`);
+                // `silent_on_failure` callers (e.g. best-effort auto-launches
+                // like the AI panel on desktop boot) skip the blocking alert.
+                if ( ! options?.silent_on_failure ) {
+                    const tokenErrorAppTitle = app_info?.title ?? app_info?.name ?? options?.name ?? 'this app';
+                    const safeTokenErrorAppTitle = window.html_encode
+                        ? window.html_encode(tokenErrorAppTitle)
+                        : tokenErrorAppTitle;
+                    if ( typeof window.UIAlert === 'function' ) {
+                        await window.UIAlert(`Couldn't open ${safeTokenErrorAppTitle}. Please try again.`);
+                    } else {
+                        window.alert(`Couldn't open ${tokenErrorAppTitle}. Please try again.`);
+                    }
                 }
 
                 const tokenFailureLaunchResult = {
@@ -474,7 +529,7 @@ const launch_app = async (options) => {
                     privateAccess: privateAccessDecision ?? undefined,
                     authTokenAcquired: false,
                 };
-                endLaunchTransaction(transaction);
+                endLaunchTransaction(transaction, 'token-unavailable');
                 return { launchResult: tokenFailureLaunchResult };
             }
         }
@@ -503,6 +558,13 @@ const launch_app = async (options) => {
 
         // Add locale to URL
         iframe_url.searchParams.append('puter.locale', window.locale);
+
+        // Newer IPC dialogs this GUI can answer, comma-separated. The SDK
+        // consults this before posting a message an older GUI has no handler
+        // for: such a message is never replied to, and a reply timeout can't
+        // stand in for the check because legitimate replies only arrive when
+        // the user closes the dialog.
+        iframe_url.searchParams.append('puter.gui_features', 'feedback-dialog');
 
         // Add options.args to URL
         iframe_url.searchParams.append('puter.args', JSON.stringify(options.args ?? {}));
@@ -584,6 +646,11 @@ const launch_app = async (options) => {
         }
 
         // show_in_taskbar
+        // Deliberately keyed on the app's own `background`, not on this launch's:
+        // an app that always runs windowless has nothing to put in the taskbar,
+        // ever. A background *launch* is a normal app that happens to start
+        // hidden, so it keeps asking for an item — UIWindow just holds it back
+        // until the window is first shown (see its taskbar block).
         let show_in_taskbar = app_info.background ? false : window_options?.show_in_taskbar;
         if ( window_options?.show_in_taskbar !== undefined )
         {
@@ -624,13 +691,24 @@ const launch_app = async (options) => {
             window_class: 'window-app',
             update_window_url: true,
             app_uuid: app_info.uuid ?? app_info.uid,
+            // Surfaced on the dashboard app-drawer as a "Send Feedback"
+            // control when the developer opted in (apps.feedbackEnabled).
+            feedback_enabled: app_info.feedback_enabled,
             top: top,
             left: left,
             height: window_height,
             width: window_width,
             app: options.name,
             iframe_credentialless: credentialless,
-            is_visible: !app_info.background,
+            // The file this instance was launched to open, stamped on the
+            // window as data-file_uid so open_item can restore this window
+            // when the same file is opened again (the signature's uid wins:
+            // it's resolved, e.g. a shortcut's uid becomes its target's).
+            file_uid: file_signature?.uid ?? options.file_uid,
+            is_visible: !starts_hidden(app_info, options),
+            // Marks a window the user has never seen, so closing the app that
+            // launched it can take it down with it (see UIWindow's close path).
+            launched_hidden: starts_hidden(app_info, options),
             is_maximized: options.maximized,
             is_fullpage: options.is_fullpage,
             ...(options.pseudonym ? { pseudonym: options.pseudonym } : {}),
@@ -643,7 +721,7 @@ const launch_app = async (options) => {
         });
 
         // If the app is not in the background, show the window
-        if ( ! app_info.background ) {
+        if ( ! starts_hidden(app_info, options) ) {
             $(el_win).show();
         }
 
@@ -653,7 +731,7 @@ const launch_app = async (options) => {
             window.launch_apps.recent.unshift(app_info);
 
             // dedupe the array by uuid, uid, and id
-            window.launch_apps.recent = _.uniqBy(window.launch_apps.recent, 'name');
+            window.launch_apps.recent = [...new Map(window.launch_apps.recent.map(v => [v.name, v])).values()];
 
             // limit to window.launch_recent_apps_count
             window.launch_apps.recent = window.launch_apps.recent.slice(0, window.launch_recent_apps_count);
@@ -678,19 +756,47 @@ const launch_app = async (options) => {
     const el = await el_win;
     process.references.el_win = el;
 
+    // Dashboard mode: an app launched from another app takes over the tab,
+    // iOS-style — the parent app minimizes behind it. State only: the
+    // parent's /app/<name> history entry already sits beneath the child's,
+    // so Back from the child (and the child's close, which consumes its
+    // entry) lands on the parent's entry and the popstate handler restores
+    // it. The parent keeps running while hidden — parent/child IPC works.
+    if ( window.is_dashboard_mode && options.parent_instance_id
+        && options.maximized && !starts_hidden(app_info, options) && el ) {
+        const el_parent_win = window.window_for_app_instance(options.parent_instance_id);
+        const parent_minimized = $(el_parent_win).attr('data-is_minimized');
+        if ( el_parent_win && parent_minimized !== '1' && parent_minimized !== 'true' ) {
+            $(el_parent_win).hideWindow();
+            // Remember WHY this window is minimized: closing the child
+            // should land on the dashboard rather than resurrecting a
+            // parent the user never dismissed themselves (UIWindow's close
+            // path reads this; any restore clears it).
+            $(el_parent_win).attr('data-minimized_for_child', uuid);
+        }
+    }
+
     if ( ! options.launched_by_exec_service ) {
         process.onchange('ipc_status', value => {
             if ( value !== PROCESS_IPC_ATTACHED ) return;
 
             $(process.references.iframe).attr('data-appUsesSDK', 'true');
 
+            // The app is talking to us, so it's genuinely usable now —
+            // unlike `app-is-ready`, which stops at the window element.
+            endLaunchTransaction(interactiveTransaction, 'ipc-attached');
+            interactiveTransaction = undefined;
+
             // Send any saved broadcasts to the new app
             globalThis.services.get('broadcast').sendSavedBroadcastsTo(uuid);
 
             // If `window-active` is set (meaning the window is focused), focus the window one more time
             // this is to ensure that the iframe is `definitely` focused and can receive keyboard events (e.g. keydown)
-            if ( $(process.references.el_win).hasClass('window-active') ) {
-                $(process.references.el_win).focusWindow();
+            // Never for a hidden window (see starts_hidden): the keyboard would
+            // go to something the user cannot see.
+            const $win = $(process.references.el_win);
+            if ( $win.attr('data-is_visible') !== '0' && $win.hasClass('window-active') ) {
+                $win.focusWindow();
             }
         });
     }
@@ -716,7 +822,7 @@ const launch_app = async (options) => {
     };
 
     // end the transaction
-    endLaunchTransaction(transaction);
+    endLaunchTransaction(transaction, 'launched');
 
     return process;
 };

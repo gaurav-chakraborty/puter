@@ -44,8 +44,8 @@ const examples = [
         title: 'AI',
         children: [
             {
-                title: 'Chat with GPT-5 nano',
-                description: 'Chat with GPT-5 nano using Puter.js AI API. Run and experiment with this chatbot example directly in the playground.',
+                title: 'Chat with GPT-5.4 nano',
+                description: 'Chat with GPT-5.4 nano using Puter.js AI API. Run and experiment with this chatbot example directly in the playground.',
                 slug: 'ai-chatgpt',
                 source: '/playground/examples/ai-chatgpt.html',
             },
@@ -84,6 +84,18 @@ const examples = [
                 description: 'Perform web search using AI to generate accurate and up-to-date information. Try out this example in Puter.js playground.',
                 slug: 'ai-web-search',
                 source: '/playground/examples/ai-web-search.html',
+            },
+            {
+                title: 'Image Generation',
+                description: 'Generate images using Gemini image models with Puter.js AI API. Run and experiment with this example directly in the playground.',
+                slug: 'ai-image-chat',
+                source: '/playground/examples/ai-image-chat.html',
+            },
+            {
+                title: 'Multi-Turn Image Editing',
+                description: 'Edit images iteratively using multi-turn conversations with Gemini image models. Run and experiment with this example directly in the playground.',
+                slug: 'ai-image-edit',
+                source: '/playground/examples/ai-image-edit.html',
             },
             {
                 title: 'AI Resume Analyzer (File handling)',
@@ -182,6 +194,30 @@ const examples = [
                 source: '/playground/examples/ai-txt2speech-elevenlabs.html',
             },
             {
+                title: 'Text to Speech with Gemini',
+                description: 'Generate speech with Gemini voices using Puter.js AI API. Run and experiment with this TTS example in the playground.',
+                slug: 'ai-txt2speech-gemini',
+                source: '/playground/examples/ai-txt2speech-gemini.html',
+            },
+            {
+                title: 'Text to Speech with xAI (Grok)',
+                description: 'Generate speech with xAI Grok voices using Puter.js AI API. Run and experiment with this TTS example in the playground.',
+                slug: 'ai-txt2speech-xai',
+                source: '/playground/examples/ai-txt2speech-xai.html',
+            },
+            {
+                title: 'List TTS Engines',
+                description: 'Query available TTS engines/models from each provider using puter.ai.txt2speech.listEngines().',
+                slug: 'ai-txt2speech-list-engines',
+                source: '/playground/examples/ai-txt2speech-list-engines.html',
+            },
+            {
+                title: 'List TTS Voices',
+                description: 'Browse available TTS voices from each provider using puter.ai.txt2speech.listVoices().',
+                slug: 'ai-txt2speech-list-voices',
+                source: '/playground/examples/ai-txt2speech-list-voices.html',
+            },
+            {
                 title: 'Voice Changer',
                 description: 'Swap a sample clip into a new voice using Puter.js AI speech-to-speech helpers.',
                 slug: 'ai-voice-changer',
@@ -204,6 +240,12 @@ const examples = [
                 description: 'Transcribe an audio recording into text using Puter.js AI API. Run and experiment with this example directly in the playground.',
                 slug: 'ai-speech2txt',
                 source: '/playground/examples/ai-speech2txt.html',
+            },
+            {
+                title: 'Transcribe with xAI (Grok)',
+                description: 'Transcribe audio using xAI Grok speech-to-text with Puter.js AI API. Run and experiment with this example in the playground.',
+                slug: 'ai-speech2txt-xai',
+                source: '/playground/examples/ai-speech2txt-xai.html',
             },
             {
                 title: 'Text to Video',
@@ -408,17 +450,29 @@ const examples = [
                 source: '/playground/examples/kv-list.html',
             },
             {
+                title: 'List (Pagination)',
+                description: 'Paginate key-value results with a cursor and limit using puter.kv.list(). Run and modify this example in the playground.',
+                slug: 'kv-list-pagination',
+                source: '/playground/examples/kv-list-pagination.html',
+            },
+            {
                 title: 'List (Sorted)',
                 description: 'See how keys are returned in lexicographic order with puter.kv.list(). Run and modify this example in the playground.',
                 slug: 'kv-list-sort',
                 source: '/playground/examples/kv-list-sort.html',
-             },
-             {
+            },
+            {
                 title: 'List (Zero-Padding)',
                 description: 'Learn how to sort numeric keys correctly by zero-padding. Run and experiment with this example in the playground.',
                 slug: 'kv-list-padding',
                 source: '/playground/examples/kv-list-padding.html',
-             },
+            },
+            {
+                title: 'List (Prefix Patterns)',
+                description: 'Learn how to model SQL-style filtering in Puter.js KV by designing keys for prefix queries. Run and modify this example in the playground.',
+                slug: 'kv-prefix-patterns',
+                source: '/playground/examples/kv-prefix-patterns.html',
+            },
             {
                 title: 'Flush',
                 description: 'Clear all data with Puter.js key-value API. Run and experiment with this flush example in the playground.',
@@ -605,6 +659,59 @@ const examples = [
                 description: 'Get app information with Puter.js apps API. Run and experiment with this example directly in the playground.',
                 slug: 'app-get',
                 source: '/playground/examples/app-get.html',
+            },
+        ],
+    },
+    {
+        title: 'UI',
+        children: [
+            {
+                title: 'Alert Dialog',
+                description: 'Display customizable alert dialogs with Puter.js UI API. Run and experiment with this example directly in the playground.',
+                slug: 'ui-alert',
+                source: '/playground/examples/ui-alert.html',
+            },
+            {
+                title: 'Prompt Dialog',
+                description: 'Display prompt dialogs to collect user input with Puter.js UI API. Run and experiment with this example directly in the playground.',
+                slug: 'ui-prompt',
+                source: '/playground/examples/ui-prompt.html',
+            },
+            {
+                title: 'Notification',
+                description: 'Display desktop notifications with Puter.js UI API. Run and experiment with this example directly in the playground.',
+                slug: 'ui-notify',
+                source: '/playground/examples/ui-notify.html',
+            },
+            {
+                title: 'Context Menu',
+                description: 'Display context menus with submenus and separators using Puter.js UI API. Run and experiment with this example directly in the playground.',
+                slug: 'ui-context-menu',
+                source: '/playground/examples/ui-context-menu.html',
+            },
+            {
+                title: 'Color Picker',
+                description: 'Present a color picker dialog with Puter.js UI API. Run and experiment with this example directly in the playground.',
+                slug: 'ui-show-color-picker',
+                source: '/playground/examples/ui-show-color-picker.html',
+            },
+            {
+                title: 'Font Picker',
+                description: 'Present a font picker dialog with Puter.js UI API. Run and experiment with this example directly in the playground.',
+                slug: 'ui-show-font-picker',
+                source: '/playground/examples/ui-show-font-picker.html',
+            },
+            {
+                title: 'Spinner (Show/Hide)',
+                description: 'Show and hide a loading spinner overlay with Puter.js UI API. Run and experiment with this example directly in the playground.',
+                slug: 'ui-spinner',
+                source: '/playground/examples/ui-spinner.html',
+            },
+            {
+                title: 'Menubar',
+                description: 'Create a menubar with nested menus using Puter.js UI API. Run and experiment with this example directly in the playground.',
+                slug: 'ui-set-menubar',
+                source: '/playground/examples/ui-set-menubar.html',
             },
         ],
     },

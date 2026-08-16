@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -23,6 +23,7 @@ import item_icon from './helpers/item_icon.js';
 import truncate_filename from './helpers/truncate_filename.js';
 import update_title_based_on_uploads from './helpers/update_title_based_on_uploads.js';
 import update_username_in_gui from './helpers/update_username_in_gui.js';
+import { select_uploaded_items } from './helpers/upload_selection.js';
 import mime from './lib/mime.js';
 import path from './lib/path.js';
 import UIAlert from './UI/UIAlert.js';
@@ -31,8 +32,15 @@ import UIWindowLogin from './UI/UIWindowLogin.js';
 import UIWindowProgress from './UI/UIWindowProgress.js';
 import UIWindowSaveAccount from './UI/UIWindowSaveAccount.js';
 
+// localStorage keys for the GUI session token. The retired key is never read
+// for authentication — a token in that format no longer verifies — only
+// cleared, so it doesn't sit in a browser forever.
+window.AUTH_TOKEN_KEY_V2 = 'auth_token_v2';
+window.AUTH_TOKEN_KEY_RETIRED = 'auth_token';
+
 window.is_auth = () => {
-    if ( localStorage.getItem('auth_token') === null || window.auth_token === null )
+    const stored = localStorage.getItem(window.AUTH_TOKEN_KEY_V2);
+    if ( stored === null || window.auth_token === null )
     {
         return false;
     }
@@ -40,6 +48,100 @@ window.is_auth = () => {
     {
         return true;
     }
+};
+
+/**
+ * Central handler for `401 { code: 'reauth_required' }`.
+ *
+ * The backend `authProbe` middleware emits this 401 shape whenever a
+ * token is retired/revoked/expired. The GUI must NOT silently logout:
+ * that loses window/URL state and surprises the user. Instead we:
+ *   1. Snapshot enough state to land back where we were after sign-in.
+ *   2. Clear the token key (and the retired one, if a value lingers).
+ *   3. Show a soft modal explaining what happened.
+ *   4. Re-open UIWindowLogin, forwarding `auth_id` so temp users can
+ *      re-attach to the same identity.
+ *
+ * Idempotent: parallel 401s while the modal is already open are dropped.
+ */
+window._reauthInProgress = false;
+window.handleReauthRequired = async (signal = {}) => {
+    if ( window._reauthInProgress ) return;
+    window._reauthInProgress = true;
+    try {
+        // Snapshot the current URL so login can land us back here.
+        try {
+            sessionStorage.setItem('reauth_return_to', window.location.href);
+        } catch ( e ) {
+            // sessionStorage may be unavailable in embedded contexts; non-fatal.
+        }
+        // Drop both keys — once we have a reauth signal the current token
+        // must not be used again, and a stale v1 key would re-trigger the
+        // same modal on the next boot.
+        try {
+            localStorage.removeItem(window.AUTH_TOKEN_KEY_V2);
+            localStorage.removeItem(window.AUTH_TOKEN_KEY_RETIRED);
+        } catch ( e ) { /* ignore */ }
+        window.auth_token = null;
+
+        // Soft modal. UIAlert is the lightest-weight existing surface.
+        try {
+            await UIAlert({
+                message: i18n('reauth_required_message') || 'Your session was updated for security — please sign in again.',
+                buttons: [
+                    {
+                        label: i18n('sign_in') || 'Sign in',
+                        value: 'sign_in',
+                        type: 'primary',
+                    },
+                ],
+            });
+        } catch ( e ) {
+            // If the alert surface isn't available (very early in boot),
+            // fall through to UIWindowLogin directly.
+        }
+
+        // Open the login window, forwarding auth_id.
+        try {
+            const login = await UIWindowLogin({
+                reload_on_success: true,
+                auth_id: signal.auth_id,
+                reauth_reason: signal.reason,
+                redirect_url: sessionStorage.getItem('reauth_return_to') || window.location.href,
+            });
+            if ( login ) {
+                try { sessionStorage.removeItem('reauth_return_to'); } catch ( e ) { /* ignore */ }
+            }
+        } catch ( e ) {
+            console.error('Reauth login flow failed:', e);
+        }
+    } finally {
+        window._reauthInProgress = false;
+    }
+};
+
+/**
+ * Inspect a jQuery / fetch error payload for the v2 `reauth_required` shape
+ * and route to either the reauth modal (soft) or the legacy hard-logout.
+ *
+ * Accepts a jQuery xhr-like object OR a parsed response body.
+ */
+window.handle401 = (xhrOrBody) => {
+    let body = null;
+    if ( xhrOrBody && typeof xhrOrBody === 'object' ) {
+        if ( 'responseJSON' in xhrOrBody && xhrOrBody.responseJSON ) {
+            body = xhrOrBody.responseJSON;
+        } else if ( 'responseText' in xhrOrBody && xhrOrBody.responseText ) {
+            try { body = JSON.parse(xhrOrBody.responseText); } catch ( e ) { body = null; }
+        } else if ( xhrOrBody.code ) {
+            body = xhrOrBody;
+        }
+    }
+    if ( body?.code === 'reauth_required' ) {
+        window.handleReauthRequired({ reason: body.reason, auth_id: body.auth_id });
+        return;
+    }
+    window.logout();
 };
 
 window.suggest_apps_for_fsentry = async (options) => {
@@ -55,8 +157,8 @@ window.suggest_apps_for_fsentry = async (options) => {
             'Authorization': `Bearer ${window.auth_token}`,
         },
         statusCode: {
-            401: function () {
-                window.logout();
+            401: function (xhr) {
+                window.handle401(xhr);
             },
         },
         success: function (res) {
@@ -77,10 +179,26 @@ window.suggest_apps_for_fsentry = async (options) => {
  * @returns
  */
 window.byte_format = (bytes) => {
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB'];
     if ( bytes === 0 ) return '0 Byte';
-    const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
+    let i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
+    if ( i < 0 ) i = 0;
+    if ( i >= sizes.length ) i = sizes.length - 1;
     return `${(bytes / Math.pow(1024, i)).toFixed(2) } ${ sizes[i]}`;
+};
+
+/**
+ * Returns a fill color for a usage progress bar that shifts from green at 0%
+ * toward red as the percentage approaches 100%, passing through yellow/orange
+ * in the middle. Uses HSL so the transition is smooth.
+ *
+ * @param {number} percent - 0..100 (clamped)
+ * @returns {string} CSS color
+ */
+window.usage_bar_color = (percent) => {
+    const p = Math.max(0, Math.min(100, Number(percent) || 0)) / 100;
+    const hue = 120 * (1 - p);
+    return `hsl(${hue.toFixed(0)}, 70%, 45%)`;
 };
 
 /**
@@ -217,7 +335,7 @@ window.validate_fsentry_name = function (name) {
 };
 
 /**
- * A function that generates a unique identifier by combining a random adjective, a random noun, and a random number (between 0 and 9999).
+ * A function that generates a unique identifier by combining a random adjective, a random noun, and a random number.
  * The result is returned as a string with components separated by hyphens.
  * It is useful when you need to create unique identifiers that are also human-friendly.
  *
@@ -226,7 +344,7 @@ window.validate_fsentry_name = function (name) {
  * @example
  *
  * let identifier = window.generate_identifier();
- * // identifier would be something like 'clever-idea-123'
+ * // identifier would be something like 'clever-idea-483920'
  *
  */
 window.generate_identifier = function () {
@@ -243,9 +361,12 @@ window.generate_identifier = function () {
         'ladybug', 'snail', 'camel', 'kangaroo', 'koala', 'panda', 'piglet', 'sheep', 'wolf', 'fox', 'deer', 'mouse', 'seal',
         'chicken', 'cow', 'dinosaur', 'puppy', 'kitten', 'circle', 'square', 'garden', 'otter', 'bunny', 'meerkat', 'harp'];
 
-    // return a random combination of first_adj + noun + number (between 0 and 9999)
-    // e.g. clever-idea-123
-    return `${first_adj[Math.floor(Math.random() * first_adj.length)] }-${ nouns[Math.floor(Math.random() * nouns.length)] }-${ Math.floor(Math.random() * 10000)}`;
+    // return a random combination of first_adj + noun + number
+    // e.g. clever-idea-483920. The word lists only reach ~3.6k pairs, so the
+    // number carries the entropy: this name is offered as a subdomain, and
+    // subdomains are globally unique, so a narrow suffix makes the taken-name
+    // error a routine part of publishing rather than a rarity.
+    return `${first_adj[Math.floor(Math.random() * first_adj.length)] }-${ nouns[Math.floor(Math.random() * nouns.length)] }-${ Math.floor(Math.random() * 1000000)}`;
 };
 
 /**
@@ -374,18 +495,20 @@ window.check_fsentry_against_allowed_file_types_string = function (fsentry, allo
         $elem.data('taphold_cancelled', false); // If event has been cancelled.
 
         // Set the timer for the hold event.
-        $elem.data('taphold_timer',
-                        setTimeout(function ()
-                        {
-                            // If event hasn't been cancelled/clicked already, then go ahead and trigger the hold.
-                            if ( !$elem.data('taphold_cancelled')
-                                && !$elem.data('taphold_clicked') )
-                            {
-                                // Trigger the hold event, and set the flag to say it's been triggered.
-                                $elem.trigger(jQuery.extend(event, jQuery.Event('taphold')));
-                                $elem.data('taphold_triggered', true);
-                            }
-                        }, settings.duration));
+        $elem.data(
+            'taphold_timer',
+            setTimeout(function ()
+            {
+                // If event hasn't been cancelled/clicked already, then go ahead and trigger the hold.
+                if ( !$elem.data('taphold_cancelled')
+                    && !$elem.data('taphold_clicked') )
+                {
+                    // Trigger the hold event, and set the flag to say it's been triggered.
+                    $elem.trigger(jQuery.extend(event, jQuery.Event('taphold')));
+                    $elem.data('taphold_triggered', true);
+                }
+            }, settings.duration),
+        );
     }
 
     // When user ends a tap or click, decide what we should do.
@@ -457,9 +580,12 @@ window.refresh_user_data = async (auth_token) => {
     }
 };
 
-window.update_auth_data = async (auth_token, user, api_origin) => {
+window.update_auth_data = async (auth_token, user) => {
     window.auth_token = auth_token;
-    localStorage.setItem('auth_token', auth_token);
+    // Write the v2 key going forward and clear any lingering v1 key so
+    // a single localStorage source-of-truth is used.
+    localStorage.setItem(window.AUTH_TOKEN_KEY_V2, auth_token);
+    localStorage.removeItem(window.AUTH_TOKEN_KEY_RETIRED);
 
     // Set http-only session cookie when user is changing.
     // This ensures user-protected endpoints, which only refer to the http-only cookie,
@@ -480,11 +606,6 @@ window.update_auth_data = async (auth_token, user, api_origin) => {
                 message: `Failed to sync session cookie: ${ e.message}`,
             });
         }
-    }
-
-    if ( api_origin ) {
-        window.api_origin = api_origin;
-        localStorage.setItem('api_origin', api_origin);
     }
 
     // Has username changed?
@@ -583,7 +704,8 @@ window.update_auth_data = async (auth_token, user, api_origin) => {
 window.mutate_user_preferences = function (user_preferences_delta) {
     for ( const [key, value] of Object.entries(user_preferences_delta) ) {
         // Don't wait for set to be done for better efficiency
-        puter.kv.set(`user_preferences.${key}`, value);
+        puter.kv.set(`user_preferences.${key}`, value)
+            .catch(err => console.warn(`Could not save user_preferences.${key}:`, err));
     }
     // There may be syncing issues across multiple devices
     window.update_user_preferences({ ...window.user_preferences, ...user_preferences_delta });
@@ -617,9 +739,59 @@ window.sendWindowWillCloseMsg = function (iframe_element) {
 window.logout = () => {
     // clear cache
     puter._cache.flushall();
+    // Clear both old and new token keys. Cookie clear is handled by
+    // the backend logout endpoint.
+    try {
+        localStorage.removeItem(window.AUTH_TOKEN_KEY_V2);
+        localStorage.removeItem(window.AUTH_TOKEN_KEY_RETIRED);
+    } catch ( e ) { /* ignore */ }
     $(document).trigger('logout');
     // document.dispatchEvent(new Event("logout", { bubbles: true}));
 };
+
+// Global jQuery ajax error interceptor. Catches any `401 { code:
+// 'reauth_required' }` that wasn't already handled by a more specific
+// `statusCode[401]` callback on the call site, so we don't have to
+// audit every legacy `$.ajax` call when the reauth signal rolls out.
+if ( typeof $ !== 'undefined' && $.fn ) {
+    $(document).ajaxError(function (event, jqxhr, settings, thrownError) {
+        if ( jqxhr?.status !== 401 ) return;
+        if ( window._reauthInProgress ) return;
+        let body = jqxhr.responseJSON;
+        if ( ! body && jqxhr.responseText ) {
+            try { body = JSON.parse(jqxhr.responseText); } catch ( e ) { /* ignore */ }
+        }
+        if ( body?.code === 'reauth_required' ) {
+            window.handleReauthRequired({ reason: body.reason, auth_id: body.auth_id });
+        }
+    });
+}
+
+// Multi-tab propagation. If another tab signs in (sets the v2 token) or
+// signs out (clears it), reflect that here without forcing a full page
+// reload when we can avoid it.
+if ( typeof window !== 'undefined' && window.addEventListener ) {
+    window.addEventListener('storage', (event) => {
+        if ( event.key !== window.AUTH_TOKEN_KEY_V2 ) return;
+        if ( event.newValue ) {
+            // A peer tab just (re)authed. Pick up the fresh token so
+            // subsequent requests stop bouncing on reauth_required.
+            window.auth_token = event.newValue;
+            try { puter?.setAuthToken?.(event.newValue, window.api_origin); } catch ( e ) { /* ignore */ }
+            // If our own reauth modal is up, the new token from a peer
+            // tab is good enough — dismiss and reload to pick up the new
+            // session.
+            if ( window._reauthInProgress ) {
+                window.location.reload();
+            }
+        } else {
+            // A peer tab signed out. Mirror that locally as a soft logout.
+            if ( ! window._reauthInProgress ) {
+                window.logout();
+            }
+        }
+    });
+}
 
 /**
  * Checks if the current document is in fullscreen mode.
@@ -724,8 +896,10 @@ window.get_apps = async (app_names, callback) => {
         })();
 
         for ( const name of uniqueMissing ) {
-            getAppsInflight.set(name,
-                            fetchPromise.then((appMap) => appMap.get(name) ?? null));
+            getAppsInflight.set(
+                name,
+                fetchPromise.then((appMap) => appMap.get(name) ?? null),
+            );
         }
 
         pendingPromises.push(fetchPromise.then((appMap) => {
@@ -813,6 +987,8 @@ window.sendItemChangeEventToWatchingApps = function (item_uid, event_data) {
  */
 
 window.show_save_account_notice_if_needed = function (message) {
+    // A failed read must not read as "not shown yet" — that would repeat the
+    // notice on every save — so the catch goes on the end of the chain.
     puter.kv.get({
         key: 'save_account_notice_shown',
     }).then(async function (value) {
@@ -820,7 +996,7 @@ window.show_save_account_notice_if_needed = function (message) {
             puter.kv.set({
                 key: 'save_account_notice_shown',
                 value: true,
-            });
+            }).catch(err => console.warn('Could not save save_account_notice_shown:', err));
             // Show the notice
             setTimeout(async () => {
                 const alert_resp = await UIAlert({
@@ -871,13 +1047,7 @@ window.show_save_account_notice_if_needed = function (message) {
                 }
             }, window.desktop_loading_fade_delay + 1000);
         }
-    });
-};
-
-window.onpopstate = (event) => {
-    if ( event.state !== null && event.state.window_id !== null ) {
-        $(`.window[data-id="${event.state.window_id}"]`).focusWindow();
-    }
+    }).catch(err => console.warn('Could not check save_account_notice_shown:', err));
 };
 
 window.sort_items = (item_container, sort_by, sort_order) => {
@@ -1037,7 +1207,7 @@ window.available_templates = () => {
 
                 const itemStructure = {
                     path: _path,
-                    html: `${extension.toUpperCase()} ${name}`,
+                    html: `${extension.toUpperCase()} ${html_encode(name)}`,
                     extension: extension,
                     name: element.name,
                 };
@@ -1086,19 +1256,29 @@ window.copy_clipboard_items = async function (dest_path, dest_container_element)
     window.update_explorer_footer_selected_items_count($(dest_container_element).closest('.window'));
 
     let overwrite_all = false;
-    (async () => {
+    // Resolves with the created items' paths once every clipboard entry has
+    // been copied (or skipped/cancelled) — callers may await it to highlight
+    // the new rows, or fire-and-forget it as before.
+    return (async () => {
         let copy_progress_window_init_ts = Date.now();
 
         // only show progress window if it takes longer than 2s to copy
         let progwin;
-        let progwin_timeout = setTimeout(async () => {
+        let latest_status;
+        const arm_progwin = () => setTimeout(async () => {
             progwin = await UIWindowProgress({
                 operation_id: copy_op_id,
                 on_cancel: () => {
                     window.operation_cancelled[copy_op_id] = true;
                 },
             });
-        }, 0);
+            // Opened mid-operation: show the file being copied rather than
+            // the default "Preparing..." status.
+            if ( latest_status ) {
+                progwin.set_status(latest_status);
+            }
+        }, 2000);
+        let progwin_timeout = arm_progwin();
 
         const copied_item_paths = [];
 
@@ -1106,7 +1286,9 @@ window.copy_clipboard_items = async function (dest_path, dest_container_element)
             let copy_path = window.clipboard[i].path;
             let item_with_same_name_already_exists = true;
             let overwrite = overwrite_all;
-            progwin?.set_status(i18n('copying_file', copy_path));
+            let keep_both = false;
+            latest_status = i18n('copying_file', copy_path);
+            progwin?.set_status(latest_status);
 
             do {
                 if ( overwrite )
@@ -1126,13 +1308,15 @@ window.copy_clipboard_items = async function (dest_path, dest_container_element)
                         source: copy_path,
                         destination: dest_path,
                         overwrite: overwrite || overwrite_all,
-                        // if user is copying an item to where its source is, change the name so there is no conflict
-                        dedupeName: dest_path === path.dirname(copy_path),
+                        // dedupe when the user chose "Keep Both" on a conflict, or
+                        // when copying an item to where its source is — either way
+                        // the copy gets a "name (1)" style name instead of conflicting
+                        dedupeName: keep_both || dest_path === path.dirname(copy_path),
                     });
 
                     // remove overwritten item from the DOM
                     if ( resp[0].overwritten?.id ) {
-                        $(`.item[data-uid=${resp[0].overwritten.id}]`).removeItems();
+                        $(`.item[data-uid='${resp[0].overwritten.id}']`).removeItems();
                     }
 
                     // copy new path for undo copy
@@ -1142,25 +1326,36 @@ window.copy_clipboard_items = async function (dest_path, dest_container_element)
                     break;
                 } catch ( err ) {
                     if ( err.code === 'item_with_same_name_exists' ) {
+                        // The operation is paused on user input, so pause the
+                        // progress-window timer too — otherwise "Preparing..."
+                        // pops up on top of the dialog while it waits.
+                        clearTimeout(progwin_timeout);
                         const alert_resp = await UIAlert({
                             message: `<strong>${html_encode(err.entry_name)}</strong> already exists.`,
                             buttons: [
                                 { label: i18n('replace'), type: 'primary', value: 'replace' },
                                 ... (window.clipboard.length > 1) ? [{ label: i18n('replace_all'), value: 'replace_all' }] : [],
+                                { label: i18n('keep_both'), value: 'keep_both' },
                                 ... (window.clipboard.length > 1) ? [{ label: i18n('skip'), value: 'skip' }] : [{ label: i18n('cancel'), value: 'cancel' }],
                             ],
                         });
+                        progwin_timeout = arm_progwin();
                         if ( alert_resp === 'replace' ) {
                             overwrite = true;
                         } else if ( alert_resp === 'replace_all' ) {
                             overwrite = true;
                             overwrite_all = true;
+                        } else if ( alert_resp === 'keep_both' ) {
+                            keep_both = true;
                         } else if ( alert_resp === 'skip' || alert_resp === 'cancel' ) {
                             item_with_same_name_already_exists = false;
                         }
                     }
                     else {
-                        if ( err.message ) {
+                        // An out-of-storage copy already shows the SDK's
+                        // upgrade dialog — a second, generic alert on top of
+                        // it would just bury the actionable one.
+                        if ( err.message && err.code !== 'storage_limit_reached' ) {
                             UIAlert(err.message);
                         }
                         item_with_same_name_already_exists = false;
@@ -1190,6 +1385,10 @@ window.copy_clipboard_items = async function (dest_path, dest_container_element)
                 });
             }
         }
+
+        // Resolve with the paths that were actually created so callers can
+        // highlight the new items (a cancelled or skipped item isn't listed).
+        return copied_item_paths;
     })();
 };
 
@@ -1207,14 +1406,21 @@ window.copy_items = function (el_items, dest_path) {
 
         // only show progress window if it takes longer than 2s to copy
         let progwin;
-        let progwin_timeout = setTimeout(async () => {
+        let latest_status;
+        const arm_progwin = () => setTimeout(async () => {
             progwin = await UIWindowProgress({
                 operation_id: copy_op_id,
                 on_cancel: () => {
                     window.operation_cancelled[copy_op_id] = true;
                 },
             });
+            // Opened mid-operation: show the file being copied rather than
+            // the default "Preparing..." status.
+            if ( latest_status ) {
+                progwin.set_status(latest_status);
+            }
         }, 2000);
+        let progwin_timeout = arm_progwin();
 
         const copied_item_paths = [];
 
@@ -1222,7 +1428,9 @@ window.copy_items = function (el_items, dest_path) {
             let copy_path = $(el_items[i]).attr('data-path');
             let item_with_same_name_already_exists = true;
             let overwrite = overwrite_all;
-            progwin?.set_status(i18n('copying_file', copy_path));
+            let keep_both = false;
+            latest_status = i18n('copying_file', copy_path);
+            progwin?.set_status(latest_status);
 
             do {
                 if ( overwrite )
@@ -1239,13 +1447,15 @@ window.copy_items = function (el_items, dest_path) {
                         source: copy_path,
                         destination: dest_path,
                         overwrite: overwrite || overwrite_all,
-                        // if user is copying an item to where the source is, automatically change the name so there is no conflict
-                        dedupeName: dest_path === path.dirname(copy_path),
+                        // dedupe when the user chose "Keep Both" on a conflict, or
+                        // when copying an item to where its source is — either way
+                        // the copy gets a "name (1)" style name instead of conflicting
+                        dedupeName: keep_both || dest_path === path.dirname(copy_path),
                     });
 
                     // remove overwritten item from the DOM
                     if ( resp[0].overwritten?.id ) {
-                        $(`.item[data-uid=${resp.overwritten.id}]`).removeItems();
+                        $(`.item[data-uid='${resp[0].overwritten.id}']`).removeItems();
                     }
 
                     // copy new path for undo copy
@@ -1255,25 +1465,39 @@ window.copy_items = function (el_items, dest_path) {
                     item_with_same_name_already_exists = false;
                 } catch ( err ) {
                     if ( err.code === 'item_with_same_name_exists' ) {
+                        // The operation is paused on user input, so pause the
+                        // progress-window timer too — otherwise "Preparing..."
+                        // pops up on top of the dialog while it waits.
+                        clearTimeout(progwin_timeout);
                         const alert_resp = await UIAlert({
                             message: `<strong>${html_encode(err.entry_name)}</strong> already exists.`,
                             buttons: [
                                 { label: i18n('replace'), type: 'primary', value: 'replace' },
                                 ... (el_items.length > 1) ? [{ label: i18n('replace_all'), value: 'replace_all' }] : [],
+                                { label: i18n('keep_both'), value: 'keep_both' },
                                 ... (el_items.length > 1) ? [{ label: i18n('skip'), value: 'skip' }] : [{ label: i18n('cancel'), value: 'cancel' }],
                             ],
                         });
+                        progwin_timeout = arm_progwin();
                         if ( alert_resp === 'replace' ) {
                             overwrite = true;
                         } else if ( alert_resp === 'replace_all' ) {
                             overwrite = true;
                             overwrite_all = true;
+                        } else if ( alert_resp === 'keep_both' ) {
+                            keep_both = true;
                         } else if ( alert_resp === 'skip' || alert_resp === 'cancel' ) {
                             item_with_same_name_already_exists = false;
                         }
                     }
                     else {
-                        if ( err.message ) {
+                        // An out-of-storage copy already shows the SDK's
+                        // upgrade dialog — a second, generic alert on top of
+                        // it would just bury the actionable one.
+                        if ( err.code === 'storage_limit_reached' ) {
+                            // handled by the SDK prompt
+                        }
+                        else if ( err.message ) {
                             UIAlert(err.message);
                         }
                         else if ( err ) {
@@ -1454,6 +1678,40 @@ window.trigger_download = (paths) => {
 };
 
 /**
+ * Updates every Trash icon in the UI to reflect whether the trash is empty:
+ * the taskbar item, desktop items (and shortcuts to Trash), open explorer
+ * window head icons, and the Dashboard's Files-tab sidebar.
+ *
+ * @param {boolean} is_empty - Whether the trash is empty
+ */
+window.update_trash_icons = function (is_empty) {
+    const icon = is_empty ? window.icons['trash.svg'] : window.icons['trash-full.svg'];
+    $('[data-app="trash"]').find('.taskbar-icon > img').attr('src', icon);
+    $(`.item[data-path="${html_encode(window.trash_path)}" i], .item[data-shortcut_to_path="${html_encode(window.trash_path)}" i]`).find('.item-icon > img').attr('src', icon);
+    $(`.window[data-path="${html_encode(window.trash_path)}" i]`).find('.window-head-icon').attr('src', icon);
+    $('.directories [data-folder="Trash"] img').attr('src', icon);
+};
+
+/**
+ * Checks whether the trash is empty, updates every Trash icon accordingly,
+ * and notifies the user's other open tabs. Call after operations that change
+ * trash contents without going through window.move_items or
+ * window.empty_trash (e.g. permanent delete, direct restore).
+ *
+ * @returns {Promise<void>}
+ */
+window.refresh_trash_state = async function () {
+    // 'strong' consistency: an 'eventual' stat can be served from the SDK
+    // cache, which is stale right after a trash mutation and — when seeded
+    // by readdir — lacks the `is_empty` field entirely.
+    const trash = await puter.fs.stat({ path: window.trash_path, consistency: 'eventual' });
+    if ( window.socket ) {
+        window.socket.emit('trash.is_empty', { is_empty: trash.is_empty });
+    }
+    window.update_trash_icons(trash.is_empty);
+};
+
+/**
  * Moves the given items to the destination path.
  *
  * @param {HTMLElement[]} el_items - jQuery elements representing the items to move
@@ -1492,14 +1750,21 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
 
     // only show progress window if it takes longer than 2s to move
     let progwin;
-    let progwin_timeout = setTimeout(async () => {
+    let latest_status;
+    const arm_progwin = () => setTimeout(async () => {
         progwin = await UIWindowProgress({
             operation_id: move_op_id,
             on_cancel: () => {
                 window.operation_cancelled[move_op_id] = true;
             },
         });
+        // Opened mid-operation: show the file being moved rather than the
+        // default "Preparing..." status.
+        if ( latest_status ) {
+            progwin.set_status(latest_status);
+        }
     }, 2000);
+    let progwin_timeout = arm_progwin();
 
     // storing moved items for undo ability
     const moved_items = [];
@@ -1523,7 +1788,10 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
 
         // cannot move item to its own path, skip it
         if ( path.dirname($(el_item).attr('data-path')) === dest_path ) {
+            // pause the progress-window timer while waiting for the user
+            clearTimeout(progwin_timeout);
             await UIAlert(`<p>Moving <strong>${html_encode($(el_item).attr('data-name'))}</strong></p>Cannot move item to its current location.`);
+            progwin_timeout = arm_progwin();
 
             continue;
         }
@@ -1531,6 +1799,7 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
         // if an item with the same name already exists in the destination path
         let item_with_same_name_already_exists = false;
         let overwrite = overwrite_all;
+        let keep_both = false;
         let untrashed_at_least_one_item = false;
 
         // --------------------------------------------------------
@@ -1591,13 +1860,14 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
                     }
 
                     // change trash icons to 'trash-full.svg'
-                    $('[data-app="trash"]').find('.taskbar-icon > img').attr('src', window.icons['trash-full.svg']);
-                    $(`.item[data-path="${html_encode(window.trash_path)}" i], .item[data-shortcut_to_path="${html_encode(window.trash_path)}" i]`).find('.item-icon > img').attr('src', window.icons['trash-full.svg']);
-                    $(`.window[data-path="${html_encode(window.trash_path)}" i]`).find('.window-head-icon').attr('src', window.icons['trash-full.svg']);
+                    window.update_trash_icons(false);
                 }
 
                 // moving an item into a trashed directory? deny.
                 else if ( dest_path.startsWith(window.trash_path) ) {
+                    // the pending timer would otherwise open an orphan
+                    // progress window after the operation already bailed
+                    clearTimeout(progwin_timeout);
                     progwin?.close();
                     UIAlert('Cannot move items into a deleted folder.');
                     return;
@@ -1617,13 +1887,17 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
                 // --------------------------------------------------------
                 // update progress window with current item being moved
                 // --------------------------------------------------------
-                progwin?.set_status(i18n(status_i18n_string, path_to_show_on_progwin));
+                latest_status = i18n(status_i18n_string, path_to_show_on_progwin);
+                progwin?.set_status(latest_status);
 
                 // execute move
                 let resp = await puter.fs.move({
                     source: $(el_item).attr('data-uid'),
                     destination: dest_path,
                     overwrite: overwrite || overwrite_all,
+                    // "Keep Both" conflict resolution: move under a deduped
+                    // "name (1)" style name instead of overwriting
+                    dedupeName: keep_both,
                     newName: new_name,
                     // recycling requires making all missing dirs
                     createMissingParents: recycling,
@@ -1639,11 +1913,24 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
                 // skip next loop iteration because this iteration was successful
                 item_with_same_name_already_exists = false;
 
-                // update all shortcut_to_path
-                $(`.item[data-shortcut_to_path="${html_encode($(el_item).attr('data-path'))}" i]`).attr('data-shortcut_to_path', fsentry.path);
+                // update all shortcut_to_path — compare raw attribute values
+                // (item rows store paths unencoded, so an html_encode()d
+                // selector misses names containing & < > " ')
+                const moved_from_path_lc = String($(el_item).attr('data-path') || '').toLowerCase();
+                $('.item[data-shortcut_to_path]').filter(function () {
+                    return String($(this).attr('data-shortcut_to_path')).toLowerCase() === moved_from_path_lc;
+                }).attr('data-shortcut_to_path', fsentry.path);
 
-                // Remove all items with matching uids
-                $(`.item[data-uid='${$(el_item).attr('data-uid')}']`).fadeOut(150, function () {
+                // Remove all items with matching uids from their OLD location(s).
+                // Exclude any row already at the item's new path: a concurrent
+                // item.moved socket handler may have just created a row at the
+                // destination (e.g. the dashboard file view showing the target
+                // directory), and removing by uid alone would delete it too.
+                // Raw case-insensitive compare, for the same reason as above.
+                const dest_item_path_lc = fsentry.path.toLowerCase();
+                $(`.item[data-uid='${$(el_item).attr('data-uid')}']`).not(function () {
+                    return String($(this).attr('data-path') || '').toLowerCase() === dest_item_path_lc;
+                }).fadeOut(150, function () {
                     // find all parent windows that contain this item
                     let parent_windows = $(`.item[data-uid='${$(el_item).attr('data-uid')}']`).closest('.window');
                     // remove this item
@@ -1686,7 +1973,7 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
 
                 // if replacing an existing item, remove the old item that was just replaced
                 if ( resp.overwritten?.id ) {
-                    $(`.item[data-uid=${resp.overwritten.id}]`).removeItems();
+                    $(`.item[data-uid='${resp.overwritten.id}']`).removeItems();
                 }
 
                 // if this is trash, get original name from item metadata
@@ -1762,19 +2049,27 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
                 if ( err.code === 'item_with_same_name_exists' ) {
                     item_with_same_name_already_exists = true;
 
+                    // The operation is paused on user input, so pause the
+                    // progress-window timer too — otherwise "Preparing..."
+                    // pops up on top of the dialog while it waits.
+                    clearTimeout(progwin_timeout);
                     const alert_resp = await UIAlert({
                         message: `<strong>${html_encode(err.entry_name)}</strong> already exists.`,
                         buttons: [
                             { label: i18n('replace'), type: 'primary', value: 'replace' },
                             ... (el_items.length > 1) ? [{ label: i18n('replace_all'), value: 'replace_all' }] : [],
+                            { label: i18n('keep_both'), value: 'keep_both' },
                             ... (el_items.length > 1) ? [{ label: i18n('skip'), value: 'skip' }] : [{ label: i18n('cancel'), value: 'cancel' }],
                         ],
                     });
+                    progwin_timeout = arm_progwin();
                     if ( alert_resp === 'replace' ) {
                         overwrite = true;
                     } else if ( alert_resp === 'replace_all' ) {
                         overwrite = true;
                         overwrite_all = true;
+                    } else if ( alert_resp === 'keep_both' ) {
+                        keep_both = true;
                     } else if ( alert_resp === 'skip' || alert_resp === 'cancel' ) {
                         item_with_same_name_already_exists = false;
                     }
@@ -1796,15 +2091,7 @@ window.move_items = async function (el_items, dest_path, is_undo = false) {
 
         // check if trash is empty
         if ( untrashed_at_least_one_item ) {
-            const trash = await puter.fs.stat({ path: window.trash_path, consistency: 'eventual' });
-            if ( window.socket ) {
-                window.socket.emit('trash.is_empty', { is_empty: trash.is_empty });
-            }
-            if ( trash.is_empty ) {
-                $('[data-app="trash"]').find('.taskbar-icon > img').attr('src', window.icons['trash.svg']);
-                $(`.item[data-path="${html_encode(window.trash_path)}" i]`).find('.item-icon > img').attr('src', window.icons['trash.svg']);
-                $(`.window[data-path="${html_encode(window.trash_path)}" i]`).find('.window-head-icon').attr('src', window.icons['trash.svg']);
-            }
+            await window.refresh_trash_state();
         }
     }
 
@@ -1986,6 +2273,53 @@ window.updateSubdomainsForItems = async function (fsentries, container) {
     }
 };
 
+// This flow owns its own file input rather than borrowing the shell's
+// #upload-file-dialog. That element is shared, and on the dashboard the Files
+// tab assigns an onchange PROPERTY to it — which jQuery's unbind() cannot
+// remove — so a single selection used to fire both handlers and start two
+// concurrent uploads of the same files. When the two destinations coincided
+// (both default to Desktop) the signed batch writes raced and the loser failed
+// with "Entry already exists"; when they differed, the files also landed in
+// the Files tab's directory. A private input keeps the two flows independent.
+let el_upload_dialog_input = null;
+
+// Destination for the pending selection. Module-level rather than captured per
+// call because the input's change handler is bound once, and only one native
+// file dialog can be open at a time — matching the old behaviour, where
+// re-binding meant the most recent caller's target won.
+let upload_dialog_target_path = null;
+
+const get_upload_dialog_input = () => {
+    if ( el_upload_dialog_input?.isConnected ) {
+        return el_upload_dialog_input;
+    }
+
+    el_upload_dialog_input = document.createElement('input');
+    el_upload_dialog_input.type = 'file';
+    el_upload_dialog_input.name = 'file';
+    el_upload_dialog_input.multiple = true;
+    el_upload_dialog_input.style.display = 'none';
+    document.body.appendChild(el_upload_dialog_input);
+
+    el_upload_dialog_input.addEventListener('change', function () {
+        // Snapshot into an array before clearing: `value = ''` empties the live
+        // FileList in place, and upload_items consumes it asynchronously.
+        const files = Array.from(el_upload_dialog_input.files ?? []);
+        el_upload_dialog_input.value = '';
+        if ( files.length === 0 ) {
+            return;
+        }
+        try {
+            window.upload_items(files, upload_dialog_target_path);
+        }
+        catch ( err ) {
+            UIAlert(err.message ?? err);
+        }
+    });
+
+    return el_upload_dialog_input;
+};
+
 /**
  *
  * @param {*} el_target_container
@@ -1993,29 +2327,15 @@ window.updateSubdomainsForItems = async function (fsentries, container) {
  */
 
 window.init_upload_using_dialog = function (el_target_container, target_path = null) {
-    $('#upload-file-dialog').unbind('onchange');
-    $('#upload-file-dialog').unbind('change');
-    $('#upload-file-dialog').unbind('onChange');
+    upload_dialog_target_path = target_path === null
+        ? $(el_target_container).attr('data-path')
+        : path.resolve(target_path);
 
-    target_path = target_path === null ? $(el_target_container).attr('data-path') : path.resolve(target_path);
-    $('#upload-file-dialog').trigger('click');
-    $('#upload-file-dialog').on('change', async function (e) {
-        if ( $('#upload-file-dialog').val() !== '' ) {
-            const files = $('#upload-file-dialog')[0].files;
-            if ( files.length > 0 ) {
-                try {
-                    window.upload_items(files, target_path);
-                }
-                catch ( err ) {
-                    UIAlert(err.message ?? err);
-                }
-                $('#upload-file-dialog').val('');
-            }
-        }
-        else {
-            return;
-        }
-    });
+    const el_input = get_upload_dialog_input();
+    // Clearing before opening lets the same file be picked twice in a row; an
+    // unchanged value fires no change event.
+    el_input.value = '';
+    el_input.click();
 };
 
 window.upload_items = async function (items, dest_path) {
@@ -2028,85 +2348,90 @@ window.upload_items = async function (items, dest_path) {
     }
 
     puter.fs.upload(
-                    // what to upload
-                    items,
-                    // where to upload
-                    dest_path,
-                    // options
-                    {
-                        generateThumbnails: true,
-                        // init
-                        init: async (operation_id, xhr) => {
-                            opid = operation_id;
-                            // create upload progress window
-                            upload_progress_window = await UIWindowProgress({
-                                title: i18n('upload'),
-                                icon: window.icons['app-icon-uploader.svg'],
-                                operation_id: operation_id,
-                                show_progress: true,
-                                on_cancel: () => {
-                                    window.show_save_account_notice_if_needed();
-                                    xhr.abort();
-                                },
-                            });
-                            // add to active_uploads
-                            window.active_uploads[opid] = 0;
-                        },
-                        // start
-                        start: async function () {
-                            // change upload progress window message to uploading
-                            upload_progress_window.set_status('Uploading');
-                            upload_progress_window.set_progress(0);
-                        },
-                        // progress
-                        progress: async function (operation_id, op_progress) {
-                            upload_progress_window.set_progress(op_progress);
-                            // update active_uploads
-                            window.active_uploads[opid] = op_progress;
-                            // update title if window is not visible
-                            if ( document.visibilityState !== 'visible' ) {
-                                update_title_based_on_uploads();
-                            }
-                        },
-                        // success
-                        success: async function (items) {
-                            // DONE
-                            // Add action to actions_history for undo ability
-                            const files = [];
-                            if ( typeof items[Symbol.iterator] === 'function' ) {
-                                for ( const item of items ) {
-                                    files.push(item.path);
-                                }
-                            } else {
-                                files.push(items.path);
-                            }
+        // what to upload
+        items,
+        // where to upload
+        dest_path,
+        // options
+        {
+            generateThumbnails: true,
+            // init
+            init: async (operation_id, xhr) => {
+                opid = operation_id;
+                // create upload progress window
+                upload_progress_window = await UIWindowProgress({
+                    title: i18n('upload'),
+                    icon: window.icons['app-icon-uploader.svg'],
+                    operation_id: operation_id,
+                    show_progress: true,
+                    on_cancel: () => {
+                        window.show_save_account_notice_if_needed();
+                        xhr.abort();
+                    },
+                });
+                // add to active_uploads
+                window.active_uploads[opid] = 0;
+            },
+            // start
+            start: async function () {
+                // change upload progress window message to uploading
+                upload_progress_window.set_status('Uploading');
+                upload_progress_window.set_progress(0);
+            },
+            // progress
+            progress: async function (operation_id, op_progress) {
+                upload_progress_window.set_progress(op_progress);
+                // update active_uploads
+                window.active_uploads[opid] = op_progress;
+                // update title if window is not visible
+                if ( document.visibilityState !== 'visible' ) {
+                    update_title_based_on_uploads();
+                }
+            },
+            // success
+            success: async function (items) {
+                // DONE
+                // Add action to actions_history for undo ability
+                const files = [];
+                if ( typeof items[Symbol.iterator] === 'function' ) {
+                    for ( const item of items ) {
+                        files.push(item.path);
+                    }
+                } else {
+                    files.push(items.path);
+                }
 
-                            window.actions_history.push({
-                                operation: 'upload',
-                                data: files,
-                            });
-                            // close progress window after a bit of delay for a better UX
-                            setTimeout(() => {
-                                setTimeout(() => {
-                                    upload_progress_window.close();
-                                    window.show_save_account_notice_if_needed();
-                                }, Math.abs(window.upload_progress_hide_delay));
-                            });
-                            // remove from active_uploads
-                            delete window.active_uploads[opid];
-                        },
-                        // error
-                        error: async function (err) {
-                            upload_progress_window.show_error(i18n('error_uploading_files'), err.message);
-                            // remove from active_uploads
-                            delete window.active_uploads[opid];
-                        },
-                        // abort
-                        abort: async function (operation_id) {
-                            // remove from active_uploads
-                            delete window.active_uploads[opid];
-                        },
-                    });
+                window.actions_history.push({
+                    operation: 'upload',
+                    data: files,
+                });
+
+                // highlight the uploaded items in the destination
+                select_uploaded_items(dest_path, files);
+
+                // close progress window after a bit of delay for a better UX
+                setTimeout(() => {
+                    setTimeout(() => {
+                        upload_progress_window.close();
+                        window.show_save_account_notice_if_needed();
+                    }, Math.abs(window.upload_progress_hide_delay));
+                });
+                // remove from active_uploads
+                delete window.active_uploads[opid];
+            },
+            // error
+            error: async function (err) {
+                upload_progress_window.show_error(i18n('error_uploading_files'), err.message);
+                // remove from active_uploads
+                delete window.active_uploads[opid];
+            },
+            // abort
+            abort: async function (operation_id) {
+                // remove from active_uploads
+                delete window.active_uploads[opid];
+            },
+        },
+    );
 };
 
 window.empty_trash = async function () {
@@ -2148,9 +2473,7 @@ window.empty_trash = async function () {
                 window.socket.emit('trash.is_empty', { is_empty: true });
             }
             // use the 'empty trash' icon for Trash
-            $('[data-app="trash"]').find('.taskbar-icon > img').attr('src', window.icons['trash.svg']);
-            $(`.item[data-path="${html_encode(window.trash_path)}" i], .item[data-shortcut_to_path="${html_encode(window.trash_path)}" i]`).find('.item-icon > img').attr('src', window.icons['trash.svg']);
-            $(`.window[data-path="${window.trash_path}"]`).find('.window-head-icon').attr('src', window.icons['trash.svg']);
+            window.update_trash_icons(true);
             // remove all items with trash paths
             // todo this has to be case-insensitive but the `i` selector doesn't work on ^=
             $(`.item[data-path^="${window.trash_path}/"]`).removeItems();
@@ -2179,32 +2502,6 @@ window.copy_to_clipboard = async function (text) {
     else {
         document.execCommand('copy');
     }
-};
-
-window.getUsage = () => {
-    return fetch(`${window.api_origin }/drivers/usage`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${ window.auth_token}`,
-        },
-        method: 'GET',
-    })
-        .then(response => {
-        // Check if the response is ok (status code in the range 200-299)
-            if ( ! response.ok ) {
-                throw new Error('Network response was not ok');
-            }
-            return response.json(); // Parse the response as JSON
-        })
-        .then(data => {
-        // Handle the JSON data
-            return data;
-        })
-        .catch(error => {
-        // Handle any errors
-            console.error('There has been a problem with your fetch operation:', error);
-        });
-
 };
 
 window.getAppUIDFromOrigin = async function (origin) {
@@ -2547,30 +2844,31 @@ window.unzipItem = async function (itemPath) {
                 }
             });
             queuedFileWrites.length && puter.fs.upload(
-                            // what to upload
-                            queuedFileWrites,
-                            // where to upload
-                            `${rootdir.path }/`,
-                            // options
-                            {
-                                createFileParent: true,
-                                generateThumbnails: true,
-                                progress: async function (operation_id, op_progress) {
-                                    progwin.set_progress(op_progress);
-                                    // update title if window is not visible
-                                    if ( document.visibilityState !== 'visible' ) {
-                                        update_title_based_on_uploads();
-                                    }
-                                },
-                                success: async function (items) {
-                                    progwin?.set_progress(window.zippingProgressConfig.TOTAL.toPrecision(2));
-                                    // close progress window
-                                    clearTimeout(progwin_timeout);
-                                    setTimeout(() => {
-                                        progwin?.close();
-                                    }, Math.max(0, window.unzip_progress_hide_delay - (Date.now() - start_ts)));
-                                },
-                            });
+                // what to upload
+                queuedFileWrites,
+                // where to upload
+                `${rootdir.path }/`,
+                // options
+                {
+                    createFileParent: true,
+                    generateThumbnails: true,
+                    progress: async function (operation_id, op_progress) {
+                        progwin.set_progress(op_progress);
+                        // update title if window is not visible
+                        if ( document.visibilityState !== 'visible' ) {
+                            update_title_based_on_uploads();
+                        }
+                    },
+                    success: async function (items) {
+                        progwin?.set_progress(window.zippingProgressConfig.TOTAL.toPrecision(2));
+                        // close progress window
+                        clearTimeout(progwin_timeout);
+                        setTimeout(() => {
+                            progwin?.close();
+                        }, Math.max(0, window.unzip_progress_hide_delay - (Date.now() - start_ts)));
+                    },
+                },
+            );
         }
     });
 };
@@ -2798,25 +3096,27 @@ window.untarItem = async function (itemPath) {
             }
         }
 
-        queuedFileWrites.length && puter.fs.upload(queuedFileWrites,
-                        `${rootdir.path }/`,
-                        {
-                            createFileParent: true,
-                            generateThumbnails: true,
-                            progress: async function (operation_id, op_progress) {
-                                progwin.set_progress(op_progress);
-                                if ( document.visibilityState !== 'visible' ) {
-                                    update_title_based_on_uploads();
-                                }
-                            },
-                            success: async function (items) {
-                                progwin?.set_progress(window.zippingProgressConfig.TOTAL.toPrecision(2));
-                                clearTimeout(progwin_timeout);
-                                setTimeout(() => {
-                                    progwin?.close();
-                                }, Math.max(0, window.unzip_progress_hide_delay - (Date.now() - start_ts)));
-                            },
-                        });
+        queuedFileWrites.length && puter.fs.upload(
+            queuedFileWrites,
+            `${rootdir.path }/`,
+            {
+                createFileParent: true,
+                generateThumbnails: true,
+                progress: async function (operation_id, op_progress) {
+                    progwin.set_progress(op_progress);
+                    if ( document.visibilityState !== 'visible' ) {
+                        update_title_based_on_uploads();
+                    }
+                },
+                success: async function (items) {
+                    progwin?.set_progress(window.zippingProgressConfig.TOTAL.toPrecision(2));
+                    clearTimeout(progwin_timeout);
+                    setTimeout(() => {
+                        progwin?.close();
+                    }, Math.max(0, window.unzip_progress_hide_delay - (Date.now() - start_ts)));
+                },
+            },
+        );
     } catch ( err ) {
         UIAlert(err.message);
         clearTimeout(progwin_timeout);
@@ -2941,7 +3241,7 @@ window.rename_file = async (options, new_name, old_name, old_path, el_item, el_i
 
             // Update the paths of all elements whose paths start with `old_path`
             $(`[data-path^="${`${html_encode(old_path) }/`}"]`).each(function () {
-                const new_el_path = _.replace($(this).attr('data-path'), `${old_path }/`, `${new_path}/`);
+                const new_el_path = $(this).attr('data-path').replace(`${old_path }/`, `${new_path}/`);
                 $(this).attr('data-path', new_el_path);
             });
 
@@ -3059,14 +3359,18 @@ window.undo_delete = async (items) => {
 };
 
 window.store_auto_arrange_preference = (preference) => {
-    puter.kv.set('user_preferences.auto_arrange_desktop', preference);
+    // localStorage still carries it for this device either way.
+    puter.kv.set('user_preferences.auto_arrange_desktop', preference)
+        .catch(err => console.warn('Could not save auto_arrange_desktop:', err));
     localStorage.setItem('auto_arrange', preference);
 };
 
 window.get_auto_arrange_data = async () => {
-    const preferenceValue = await puter.kv.get('user_preferences.auto_arrange_desktop');
+    // Best-effort, like every other preference read: falling back to the
+    // default keeps the desktop arranging itself rather than not appearing.
+    const preferenceValue = await puter.kv.get('user_preferences.auto_arrange_desktop').catch(() => null);
     window.is_auto_arrange_enabled = preferenceValue === null ? true : preferenceValue;
-    const positions = await puter.kv.get('desktop_item_positions');
+    const positions = await puter.kv.get('desktop_item_positions').catch(() => null);
     window.desktop_item_positions = (!positions || typeof positions !== 'object' || Array.isArray(positions)) ? {} : positions;
 };
 
@@ -3095,32 +3399,14 @@ window.set_desktop_item_positions = async (el_desktop) => {
 };
 
 window.save_desktop_item_positions = () => {
-    puter.kv.set('desktop_item_positions', window.desktop_item_positions);
+    puter.kv.set('desktop_item_positions', window.desktop_item_positions)
+        .catch(err => console.warn('Could not save desktop_item_positions:', err));
 };
 
 window.delete_desktop_item_positions = () => {
     window.desktop_item_positions = {};
-    puter.kv.del('desktop_item_positions');
-};
-
-window.change_clock_visible = (clock_visible) => {
-    let newValue = clock_visible || window.user_preferences.clock_visible;
-
-    newValue === 'auto' && window.is_fullscreen() ? $('#clock').show() : $('#clock').hide();
-
-    newValue === 'show' && $('#clock').show();
-    newValue === 'hide' && $('#clock').hide();
-
-    if ( clock_visible ) {
-        // save clock_visible to user preferences
-        window.mutate_user_preferences({
-            clock_visible: newValue,
-        });
-
-        return;
-    }
-
-    $('select.change-clock-visible').val(window.user_preferences.clock_visible);
+    puter.kv.del('desktop_item_positions')
+        .catch(err => console.warn('Could not clear desktop_item_positions:', err));
 };
 
 // Finds the `.window` element for the given app instance ID
@@ -3131,22 +3417,6 @@ window.window_for_app_instance = (instance_id) => {
 // Finds the `iframe` element for the given app instance ID
 window.iframe_for_app_instance = (instance_id) => {
     return $(window.window_for_app_instance(instance_id)).find('.window-app-iframe').get(0);
-};
-
-// Run any callbacks to say that the app has launched
-window.report_app_launched = (instance_id, { uses_sdk = true }) => {
-    const child_launch_callback = window.child_launch_callbacks[instance_id];
-    if ( child_launch_callback ) {
-        const parent_iframe = window.iframe_for_app_instance(child_launch_callback.parent_instance_id);
-        // send confirmation to requester window
-        parent_iframe.contentWindow.postMessage({
-            msg: 'childAppLaunched',
-            original_msg_id: child_launch_callback.launch_msg_id,
-            child_instance_id: instance_id,
-            uses_sdk: uses_sdk,
-        }, '*');
-        delete window.child_launch_callbacks[instance_id];
-    }
 };
 
 // Run any callbacks to say that the app has closed
@@ -3208,21 +3478,6 @@ window.countSubstr = (str, substring) => {
     }
 
     return count;
-};
-
-window.detectHostOS = function () {
-    var userAgent = window.navigator.userAgent;
-    var platform = window.navigator.platform;
-    var macosPlatforms = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'];
-    var windowsPlatforms = ['Win32', 'Win64', 'Windows', 'WinCE'];
-
-    if ( macosPlatforms.indexOf(platform) !== -1 ) {
-        return 'macos';
-    } else if ( windowsPlatforms.indexOf(platform) !== -1 ) {
-        return 'windows';
-    } else {
-        return 'other';
-    }
 };
 
 window.update_profile = function (username, key_vals) {
@@ -3303,23 +3558,6 @@ window.format_with_units = (num, { mulUnits, divUnits, precision = 3 }) => {
     const rounded = Number.parseFloat(scaled.toPrecision(precision));
 
     return `${rounded}${symbol}`;
-};
-
-window.format_SI = (num) => {
-    if ( num === 0 ) return '0';
-
-    const mulUnits = ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
-    const divUnits = ['m', 'µ', 'n', 'p', 'f', 'a', 'z', 'y'];
-
-    return window.format_with_units(num, { mulUnits, divUnits });
-};
-
-window.format_credits = (num) => {
-    if ( num === 0 ) return '0';
-
-    const mulUnits = ['', 'K', 'M', 'B', 'T', 'Q'];
-
-    return window.format_with_units(num, { mulUnits });
 };
 
 /**

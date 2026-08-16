@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -19,6 +19,7 @@
 
 import mime from '../lib/mime.js';
 import content_type_to_icon from './content_type_to_icon.js';
+import { getWeblinkIcon } from './weblink.js';
 
 /**
  * Assigns an icon to a filesystem entry based on its properties such as name, type,
@@ -62,8 +63,12 @@ const item_icon = async (fsentry) => {
     // --------------------------------------------------
     // app icon
     // --------------------------------------------------
-    else if ( fsentry.associated_app && fsentry.associated_app?.name ) {
-        if ( fsentry.associated_app.icon )
+    else if (
+        fsentry.associated_app
+        || fsentry.associated_app_id
+        || fsentry.associatedAppId
+    ) {
+        if ( fsentry.associated_app?.icon )
         {
             return { image: fsentry.associated_app.icon, type: 'icon' };
         }
@@ -236,7 +241,7 @@ const item_icon = async (fsentry) => {
     }
     // *.weblink
     else if ( fsentry.name.toLowerCase().endsWith('.weblink') ) {
-        return { image: window.icons['link.svg'], type: 'icon' };
+        return { image: await getWeblinkIcon(fsentry), type: 'icon' };
     }
     // *.tar
     else if ( fsentry.name.toLowerCase().endsWith('.tar') ) {

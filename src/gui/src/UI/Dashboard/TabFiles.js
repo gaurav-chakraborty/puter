@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -27,25 +27,34 @@ import UIAlert from '../UIAlert.js';
 import generate_file_context_menu from '../../helpers/generate_file_context_menu.js';
 import truncate_filename from '../../helpers/truncate_filename.js';
 import update_title_based_on_uploads from '../../helpers/update_title_based_on_uploads.js';
+import item_icon from '../../helpers/item_icon.js';
+import { user_facing_windows } from '../../helpers/window_visibility.js';
 import new_context_menu_item from '../../helpers/new_context_menu_item.js';
-import ContextMenuModal from './ContextMenu/ContextMenu.js';
+import publish_as_website from '../../helpers/publish_as_website.js';
+import ContextMenuModal, { isTouchPrimaryDevice } from './ContextMenu/ContextMenu.js';
+import UIItemPropertiesModal from './UIItemPropertiesModal.js';
+import { dedupedName } from './dedupedName.js';
+import { isEntryVisible, isHiddenName, showHiddenFiles } from './hiddenFiles.js';
 
 const icons = {
     document: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>`,
     files: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
     folder: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`,
     more: `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`,
-    newFolder: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M560-320h80v-80h80v-80h-80v-80h-80v80h-80v80h80v80ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H447l-80-80H160v480Zm0 0v-480 480Z"/></svg>`,
-    upload: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M440-320v-326L336-542l-56-58 200-200 200 200-56 58-104-104v326h-80ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/></svg>`,
+    // Header action icons use the Material Symbols wght300 cut (one step
+    // lighter than the default 400) to match the thinned nav arrows.
+    newFolder: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M570-330h60v-80h80v-60h-80v-80h-60v80h-80v60h80v80ZM172.31-180Q142-180 121-201q-21-21-21-51.31v-455.38Q100-738 121-759q21-21 51.31-21h219.61l80 80h315.77Q818-700 839-679q21 21 21 51.31v375.38Q860-222 839-201q-21 21-51.31 21H172.31Zm0-60h615.38q5.39 0 8.85-3.46t3.46-8.85v-375.38q0-5.39-3.46-8.85t-8.85-3.46H447.38l-80-80H172.31q-5.39 0-8.85 3.46t-3.46 8.85v455.38q0 5.39 3.46 8.85t8.85 3.46ZM160-240v-480 480Z"/></svg>`,
+    upload: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M450-328.46v-336l-98.61 98.61-42.16-43.38L480-780l170.77 170.77-42.16 43.38L510-664.46v336h-60ZM252.31-180Q222-180 201-201q-21-21-21-51.31v-108.46h60v108.46q0 4.62 3.85 8.46 3.84 3.85 8.46 3.85h455.38q4.62 0 8.46-3.85 3.85-3.84 3.85-8.46v-108.46h60v108.46Q780-222 759-201q-21 21-51.31 21H252.31Z"/></svg>`,
     trash: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>`,
     download: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/></svg>`,
     cut: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M760-120 480-400l-94 94q8 15 11 32t3 34q0 66-47 113T240-80q-66 0-113-47T80-240q0-66 47-113t113-47q17 0 34 3t32 11l94-94-94-94q-15 8-32 11t-34 3q-66 0-113-47T80-720q0-66 47-113t113-47q66 0 113 47t47 113q0 17-3 34t-11 32l494 494v40H760ZM600-520l-80-80 240-240h120v40L600-520ZM240-640q33 0 56.5-23.5T320-720q0-33-23.5-56.5T240-800q-33 0-56.5 23.5T160-720q0 33 23.5 56.5T240-640Zm240 180q8 0 14-6t6-14q0-8-6-14t-14-6q-8 0-14 6t-6 14q0 8 6 14t14 6ZM240-160q33 0 56.5-23.5T320-240q0-33-23.5-56.5T240-320q-33 0-56.5 23.5T160-240q0 33 23.5 56.5T240-160Z"/></svg>`,
     copy: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z"/></svg>`,
     restore: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M440-320h80v-166l64 62 56-56-160-160-160 160 56 56 64-62v166ZM280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520Zm-400 0v520-520Z"/></svg>`,
-    list: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M280-600v-80h560v80H280Zm0 160v-80h560v80H280Zm0 160v-80h560v80H280ZM160-600q-17 0-28.5-11.5T120-640q0-17 11.5-28.5T160-680q17 0 28.5 11.5T200-640q0 17-11.5 28.5T160-600Zm0 160q-17 0-28.5-11.5T120-480q0-17 11.5-28.5T160-520q17 0 28.5 11.5T200-480q0 17-11.5 28.5T160-440Zm0 160q-17 0-28.5-11.5T120-320q0-17 11.5-28.5T160-360q17 0 28.5 11.5T200-320q0 17-11.5 28.5T160-280Z"/></svg>`,
-    grid: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M120-520v-320h320v320H120Zm0 400v-320h320v320H120Zm400-400v-320h320v320H520Zm0 400v-320h320v320H520ZM200-600h160v-160H200v160Zm400 0h160v-160H600v160Zm0 400h160v-160H600v160Zm-400 0h160v-160H200v160Zm400-400Zm0 240Zm-240 0Zm0-240Z"/></svg>`,
-    sort: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M120-240v-80h240v80H120Zm0-200v-80h480v80H120Zm0-200v-80h720v80H120Z"/></svg>`,
-    select: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="m424-312 282-282-56-56-226 226-114-114-56 56 170 170ZM200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm0-560v560-560Z"/></svg>`,
+    list: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M293.08-597.69v-60H820v60H293.08Zm0 147.69v-60H820v60H293.08Zm0 147.69v-60H820v60H293.08ZM172.31-595.38q-13.73 0-23.02-9.4t-9.29-23.3q0-13.56 9.29-22.74 9.29-9.18 23.02-9.18t23.02 9.18q9.29 9.18 9.29 22.74 0 13.9-9.29 23.3t-23.02 9.4Zm0 147.3q-13.73 0-23.02-9.18Q140-466.43 140-480q0-14.31 9.29-23.5t23.02-9.19q13.73 0 23.02 9.19t9.29 23.5q0 13.57-9.29 22.74-9.29 9.18-23.02 9.18Zm0 148.08q-13.73 0-23.02-9.4T140-332.69q0-13.57 9.29-22.75t23.02-9.18q13.73 0 23.02 9.18t9.29 22.75q0 13.89-9.29 23.29-9.29 9.4-23.02 9.4Z"/></svg>`,
+    grid: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M140-520v-300h300v300H140Zm0 380v-300h300v300H140Zm380-380v-300h300v300H520Zm0 380v-300h300v300H520ZM200-580h180v-180H200v180Zm380 0h180v-180H580v180Zm0 380h180v-180H580v180Zm-380 0h180v-180H200v180Zm380-380Zm0 200Zm-200 0Zm0-200Z"/></svg>`,
+    gridSmall: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3.2" y="3.2" width="4.8" height="4.8" rx="0.8"/><rect x="9.6" y="3.2" width="4.8" height="4.8" rx="0.8"/><rect x="16" y="3.2" width="4.8" height="4.8" rx="0.8"/><rect x="3.2" y="9.6" width="4.8" height="4.8" rx="0.8"/><rect x="9.6" y="9.6" width="4.8" height="4.8" rx="0.8"/><rect x="16" y="9.6" width="4.8" height="4.8" rx="0.8"/><rect x="3.2" y="16" width="4.8" height="4.8" rx="0.8"/><rect x="9.6" y="16" width="4.8" height="4.8" rx="0.8"/><rect x="16" y="16" width="4.8" height="4.8" rx="0.8"/></svg>`,
+    sort: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M140-260v-60h215v60H140Zm0-190v-60h447.31v60H140Zm0-190v-60h680v60H140Z"/></svg>`,
+    select: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="m424-325.85 268.92-268.92-42.15-42.15L424-410.15l-114-114L267.85-482 424-325.85ZM212.31-140Q182-140 161-161q-21-21-21-51.31v-535.38Q140-778 161-799q21-21 51.31-21h535.38Q778-820 799-799q21 21 21 51.31v535.38Q820-182 799-161q-21 21-51.31 21H212.31Zm0-60h535.38q4.62 0 8.46-3.85 3.85-3.84 3.85-8.46v-535.38q0-4.62-3.85-8.46-3.84-3.85-8.46-3.85H212.31q-4.62 0-8.46 3.85-3.85 3.84-3.85 8.46v535.38q0 4.62 3.85 8.46 3.84 3.85 8.46 3.85ZM200-760v560-560Z"/></svg>`,
     done: `<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentcolor"><path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/></svg>`,
     worker: `<svg xmlns="http://www.w3.org/2000/svg" color="#455a64" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-zap-icon lucide-zap"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>`,
 };
@@ -84,7 +93,7 @@ const TabFiles = {
                 </form>
                 <div class="directories">
                     <ul>
-                        <li data-folder="Home" style="display: none !important;" data-path="${html_encode(window.home_path)}"><img src="${html_encode(window.icons['folder-home.svg'])}"/> <span>Home</span></li>
+                        <li data-folder="Home" data-path="${html_encode(window.home_path)}"><img src="${html_encode(window.icons['folder-home.svg'])}"/> <span>Home</span></li>
                         <li data-folder="Desktop" data-path="${html_encode(window.desktop_path)}"><img src="${html_encode(window.icons['folder-desktop.svg'])}"/> <span>Desktop</span></li>
                         <li data-folder="Documents" data-path="${html_encode(window.documents_path)}"><img src="${html_encode(window.icons['folder-documents.svg'])}"/> <span>Documents</span></li>
                         <li data-folder="Pictures" data-path="${html_encode(window.pictures_path)}"><img src="${html_encode(window.icons['folder-pictures.svg'])}"/> <span>Pictures</span></li>
@@ -97,9 +106,9 @@ const TabFiles = {
                     <div class="header">
                         <div class="path">
                             <div class="path-nav-buttons">
-                                <img draggable="false" class="path-btn path-btn-back path-btn-disabled" src="${html_encode(window.icons['arrow-left.svg'])}" title="${i18n('window_click_to_go_back')}">
-                                <img draggable="false" class="path-btn path-btn-forward path-btn-disabled" src="${html_encode(window.icons['arrow-right.svg'])}" title="${i18n('window_click_to_go_forward')}">
-                                <img draggable="false" class="path-btn path-btn-up path-btn-disabled" src="${html_encode(window.icons['arrow-up.svg'])}" title="${i18n('window_click_to_go_up')}">
+                                <img draggable="false" class="path-btn path-btn-back path-btn-disabled" src="${html_encode(window.icons['arrow-left-thin.svg'])}" title="${i18n('window_click_to_go_back')}">
+                                <img draggable="false" class="path-btn path-btn-forward path-btn-disabled" src="${html_encode(window.icons['arrow-right-thin.svg'])}" title="${i18n('window_click_to_go_forward')}">
+                                <img draggable="false" class="path-btn path-btn-up path-btn-disabled" src="${html_encode(window.icons['arrow-up-thin.svg'])}" title="${i18n('window_click_to_go_up')}">
                             </div>
                             <div class="path-breadcrumbs"></div>
                             <div class="path-actions">
@@ -155,6 +164,65 @@ const TabFiles = {
         const _this = this;
         window.dashboard_object = _this;
 
+        // The sidebar Trash icon renders in its empty state; sync it with
+        // the actual trash contents once known.
+        window.refresh_trash_state();
+
+        // Refresh an existing row in place from an fs entry. Shared with
+        // UIDashboard's item.updated socket handler so the two paths can't
+        // drift — e.g. trashed items must show metadata.original_name, not
+        // the UID that is their raw name (matching renderItem).
+        window.UIDashboardFileItemUpdate = function ($row, file) {
+            // Minimal update payloads may omit fields — only write what the
+            // event actually carries, so it can't blank a correct name/path
+            // (or zero a size) that is already on screen. A metadata-only
+            // payload without original_name resolves to '' and is skipped too.
+            let displayName = file.name || '';
+            try {
+                const meta = file.metadata ? JSON.parse(file.metadata) : null;
+                if ( meta && meta.original_name ) displayName = meta.original_name;
+            } catch { /* keep raw name */ }
+            if ( displayName ) {
+                $row.attr('data-name', displayName);
+                $row.find('.item-name').text(displayName);
+                // Never write over an open editor — a just-created row has one
+                // focused already, and mkdir's own item.added lands here right
+                // after, which would wipe out whatever the user has typed.
+                // Visibility, not the -active class: the class outlives a
+                // cancelled edit, `.hide()` does not.
+                const $editor = $row.find('.item-name-editor');
+                if ( ! $editor.is(':visible') ) {
+                    $editor.val(displayName);
+                }
+            }
+            if ( file.path ) $row.attr('data-path', file.path);
+            if ( typeof file.type !== 'undefined' ) $row.attr('data-type', file.type || '');
+            // Refresh the visible Size/Modified cells too, not just the
+            // hidden data attributes, so a remote overwrite is reflected.
+            // Only when the payload actually carries the field — a minimal
+            // update event must not zero out a correct value on screen.
+            if ( typeof file.size !== 'undefined' ) {
+                $row.attr('data-size', file.size || 0);
+                if ( $row.attr('data-is_dir') !== '1' ) {
+                    $row.find('.item-size').text(_this.formatFileSize(file.size));
+                }
+            }
+            if ( file.modified ) {
+                $row.attr('data-modified', file.modified);
+                $row.find('.item-modified').text(window.timeago.format(file.modified * 1000));
+            }
+            if (
+                _this.isGridView() &&
+                typeof file.thumbnail === 'string' &&
+                file.thumbnail.length > 0
+            ) {
+                $row.find('.item-icon img').attr('src', file.thumbnail);
+            }
+            // The footer's item-count/total-size line is computed from the
+            // rows' data-size attributes — keep it in step with the cell.
+            _this.updateFooterStats();
+        };
+
         // Dashboard-compatible item creator for use by helpers.js and socket handlers.
         // Wraps renderItem() with a directory check so items are only added
         // when the user is viewing the relevant directory.
@@ -166,26 +234,26 @@ const TabFiles = {
             const parentDir = path.dirname(file.path);
             if ( _this.currentPath !== parentDir ) return;
 
+            // Trash is never listed in the explorer (sidebar has its own entry),
+            // so a socket event must not re-add it either.
+            if ( file.path === window.trash_path ) return;
+
+            // A dot-file created elsewhere must respect the same preference the
+            // listing was rendered with, or it shows up in a view that filtered
+            // its siblings out.
+            if ( ! isEntryVisible(file.name, showHiddenFiles()) ) return;
+
             // If item already exists in view, update in-place.
             const $existingRow = $(`.files-tab .files .item[data-uid='${file.uid}']`);
             if ( $existingRow.length > 0 ) {
-                const displayName = file.name || '';
-                $existingRow.attr('data-name', displayName);
-                $existingRow.attr('data-path', file.path || '');
-                $existingRow.attr('data-size', file.size || 0);
-                $existingRow.attr('data-modified', file.modified || 0);
-                $existingRow.attr('data-type', file.type || '');
-                $existingRow.find('.item-name').text(displayName);
-                $existingRow.find('.item-name-editor').val(displayName);
-                if (
-                    _this.currentView === 'grid' &&
-                    typeof file.thumbnail === 'string' &&
-                    file.thumbnail.length > 0
-                ) {
-                    $existingRow.find('.item-icon img').attr('src', file.thumbnail);
-                }
+                window.UIDashboardFileItemUpdate($existingRow, file);
                 return;
             }
+
+            // If the directory was empty, drop the "No files in this directory."
+            // placeholder before inserting the first real row — otherwise it
+            // stays and overlaps the new item.
+            _this.$el_window.find('.files-tab .files > div:not(.item)').remove();
 
             await _this.renderItem(file);
 
@@ -201,10 +269,16 @@ const TabFiles = {
 
             // Highlight animation to indicate newly added item
             $newRow.addClass('item-newly-added');
+
+            // Reflect the new item in the footer item count / total size.
+            _this.updateFooterStats();
         };
 
         this.renderingDirectory = false;
-        this._creatingItem = false;
+        // Count, not flag: creates are started from a button that answers
+        // instantly now, so two can easily overlap and the first one finishing
+        // must not uncover the second.
+        this._creatingItem = 0;
         this.activeMenuFileUid = null;
         this.currentPath = null;
         this.currentPath = null;
@@ -217,22 +291,28 @@ const TabFiles = {
         this.typeSearchTerm = '';
         this.typeSearchTimeout = null;
         this.selectModeActive = false;
-        this.currentView = await puter.kv.get('view_mode') || 'list';
+        // Preference reads are best-effort: the tab renders with the
+        // defaults rather than not rendering at all.
+        this.currentView = await puter.kv.get('view_mode').catch(() => null) || 'list';
 
         // Sorting state
-        this.sortColumn = await puter.kv.get('sort_column') || 'name';
-        this.sortDirection = await puter.kv.get('sort_direction') || 'asc';
+        this.sortColumn = await puter.kv.get('sort_column').catch(() => null) || 'name';
+        this.sortDirection = await puter.kv.get('sort_direction').catch(() => null) || 'asc';
 
         // Column widths state (for resizing)
-        const savedWidths = await puter.kv.get('column_widths');
+        const savedWidths = await puter.kv.get('column_widths').catch(() => null);
         this.columnWidths = savedWidths ? JSON.parse(savedWidths) : {
             name: null, // auto/flex
             size: 100,
             modified: 120,
         };
 
-        // Add touch-device class for touch devices to show .item-more button
-        if ( window.isMobile.phone || window.isMobile.tablet ) {
+        // Add touch-device class on touch-FIRST devices only (coarse pointer,
+        // no hover — which also catches iPads whose UA claims macOS).
+        // Deliberately not maxTouchPoints: a touch-capable laptop is still
+        // mouse-first, and this class strips pointer-events from the
+        // name/icon drag handles, degrading mouse selection and drag.
+        if ( window.isMobile.phone || window.isMobile.tablet || isTouchPrimaryDevice() ) {
             $el_window.find('.files-tab').addClass('touch-device');
         }
 
@@ -246,9 +326,11 @@ const TabFiles = {
                 _this.renderDirectory(folderPath);
             };
 
-            // Context menu for sidebar folders
+            // Context menu for sidebar folders. isTouchPrimaryDevice() covers
+            // touch-first devices the UA misses (iPadOS claims macOS) — both
+            // for accepting the taphold and for picking the touch sheet.
             $(folderElement).on('contextmenu taphold', async (e) => {
-                if ( e.type === 'taphold' && !window.isMobile.phone && !window.isMobile.tablet ) {
+                if ( e.type === 'taphold' && !window.isMobile.phone && !window.isMobile.tablet && !isTouchPrimaryDevice() ) {
                     return;
                 }
                 e.preventDefault();
@@ -257,7 +339,7 @@ const TabFiles = {
                 const folderPath = folderElement.getAttribute('data-path');
                 const items = _this.generateFolderContextMenu(folderPath);
 
-                if ( window.isMobile.phone || window.isMobile.tablet ) {
+                if ( window.isMobile.phone || window.isMobile.tablet || isTouchPrimaryDevice() ) {
                     const modal = new ContextMenuModal({
                         onClose: () => $(folderElement).removeClass('context-menu-active'),
                     });
@@ -289,10 +371,10 @@ const TabFiles = {
 
                     ui.helper.data('dropped', true);
 
-                    // Get target folder path
-                    const folderName = folderElement.getAttribute('data-folder');
-                    const directories = Object.keys(window.user.directories);
-                    const targetPath = directories.find(f => f.endsWith(folderName));
+                    // Get target folder path from the element itself. Using the
+                    // element's own data-path covers folders (Public, Home) that
+                    // aren't keyed in window.user.directories.
+                    const targetPath = folderElement.getAttribute('data-path');
 
                     if ( ! targetPath ) return;
 
@@ -301,7 +383,7 @@ const TabFiles = {
 
                     // Add other selected items
                     $('.item-selected-clone').each(function () {
-                        const sourceId = $(this).attr('data-id');
+                        const sourceId = $(this).find('.row').attr('data-id');
                         const sourceItem = document.querySelector(`.row[data-id="${sourceId}"]`);
                         if ( sourceItem ) itemsToMove.push(sourceItem);
                     });
@@ -382,11 +464,9 @@ const TabFiles = {
                         $(folderElement).removeClass('dwell-opening');
 
                         // Only remove active if it's not the currently selected folder
-                        const folderName = folderElement.getAttribute('data-folder');
-                        const directories = Object.keys(window.user.directories);
-                        const folderUid = window.user.directories[directories.find(f => f.endsWith(folderName))];
+                        const folderPath = folderElement.getAttribute('data-path');
 
-                        if ( folderUid !== _this.currentPath ) {
+                        if ( folderPath !== _this.currentPath ) {
                             $(folderElement).removeClass('active');
                         }
                     }
@@ -448,7 +528,7 @@ const TabFiles = {
                 _this.rubberBandSelectionJustEnded = false;
                 return;
             }
-            if ( e.target === this || e.target.classList.contains('files') ) {
+            if ( e.target === e.currentTarget || e.target.classList.contains('files') ) {
                 document.querySelectorAll('.files-tab .row.selected').forEach(r => {
                     r.classList.remove('selected');
                 });
@@ -458,8 +538,9 @@ const TabFiles = {
 
         // Right-click on background shows folder context menu
         $el_window.find('.files').on('contextmenu taphold', async (e) => {
-            // Dismiss taphold on non-touch devices
-            if ( e.type === 'taphold' && !window.isMobile.phone && !window.isMobile.tablet ) {
+            // Dismiss taphold on non-touch devices (isTouchPrimaryDevice
+            // catches iPads whose UA claims macOS)
+            if ( e.type === 'taphold' && !window.isMobile.phone && !window.isMobile.tablet && !isTouchPrimaryDevice() ) {
                 return;
             }
             // Only trigger if clicking directly on .files container (not on a row)
@@ -474,7 +555,7 @@ const TabFiles = {
                 });
                 _this.updateFooterStats();
                 const items = await _this.generateFolderContextMenu();
-                if ( window.isMobile.phone || window.isMobile.tablet ) {
+                if ( window.isMobile.phone || window.isMobile.tablet || isTouchPrimaryDevice() ) {
                     const modal = new ContextMenuModal();
                     modal.show(items, e.target.getBoundingClientRect());
                 } else {
@@ -492,17 +573,7 @@ const TabFiles = {
         this.initNativeFileDrop();
 
         // Apply initial view mode from persisted preferences
-
-        const $filesContainer = this.$el_window.find('.files-tab .files');
-        const $tabContent = this.$el_window.find('.files-tab');
-        if ( this.currentView === 'grid' ) {
-            $filesContainer.addClass('files-grid-view');
-            $tabContent.addClass('files-grid-mode');
-            this.$el_window.find('.view-toggle-btn').html(icons.list);
-        } else {
-            $filesContainer.addClass('files-list-view');
-            this.$el_window.find('.view-toggle-btn').html(icons.grid);
-        }
+        this.applyViewMode();
 
         // Check for initial file path from URL routing
         if ( window.dashboard_initial_file_path ) {
@@ -511,21 +582,64 @@ const TabFiles = {
             this.pushNavHistory(initialPath);
             this.renderDirectory(initialPath, { skipUrlUpdate: true });
         } else {
-            // Auto-select Documents folder on initialization
-            const documentsFolder = $el_window.find('[data-folder="Documents"]');
-            if ( documentsFolder.length ) {
-                documentsFolder.trigger('click');
+            // Auto-select Home folder on initialization
+            const homeFolder = $el_window.find('[data-folder="Home"]');
+            if ( homeFolder.length ) {
+                homeFolder.trigger('click');
             }
         }
 
         // Setup keyboard shortcuts
         this.setupKeyboardShortcuts();
 
+        // Rows double as the switcher for app windows opened from this tab
+        // (open_item restores a file's existing window instead of launching
+        // a duplicate): a dot marks files that are open in a — possibly
+        // minimized — app window. UIWindow fires this on window open/close.
+        document.addEventListener('dashboard-app-windows-changed', () => {
+            this.updateOpenFileDots();
+        });
+
         // Refresh current directory when the user returns to this browser tab
-        document.addEventListener('visibilitychange', () => {
-            if ( document.visibilityState === 'visible' && this.currentPath ) {
-                this.renderDirectory(this.currentPath, { skipNavHistory: true, skipUrlUpdate: true });
+        document.addEventListener('visibilitychange', async () => {
+            if ( document.visibilityState !== 'visible' || !this.currentPath ) return;
+
+            const $filesTab = this.$el_window.find('.files-tab');
+
+            // The refresh rebuilds the list, which would destroy an open
+            // rename editor along with whatever the user has typed.
+            if ( $filesTab.find('.item-name-editor-active').length > 0 ) return;
+
+            // The rebuild also wipes selection, the keyboard/shift anchor,
+            // and scroll position — state the user expects to survive a quick
+            // trip to another browser tab. Carry it across by uid.
+            const $files = $filesTab.find('.files');
+            const scrollTop = $files.scrollTop();
+            const selectedUids = new Set($filesTab.find('.row.selected').map(function () {
+                return $(this).attr('data-uid');
+            }).get());
+            const anchorUid = window.latest_selected_item
+                ? $(window.latest_selected_item).attr('data-uid')
+                : null;
+
+            await this.renderDirectory(this.currentPath, { skipNavHistory: true, skipUrlUpdate: true });
+
+            if ( selectedUids.size > 0 ) {
+                $filesTab.find('.row').each(function () {
+                    if ( selectedUids.has($(this).attr('data-uid')) ) {
+                        this.classList.add('selected');
+                    }
+                });
+                this.updateFooterStats();
             }
+            if ( anchorUid ) {
+                const anchorRow = $filesTab.find(`.row[data-uid="${anchorUid}"]`)[0];
+                if ( anchorRow ) {
+                    window.latest_selected_item = anchorRow;
+                    window.active_element = anchorRow;
+                }
+            }
+            $files.scrollTop(scrollTop);
         });
     },
 
@@ -639,7 +753,7 @@ const TabFiles = {
                     // Cleanup
                     $('.drag-cancel-zone').remove();
                     $('.item-selected-clone').remove();
-                    $('.draggable-count-badge').remove();
+                    $('.row.dragging-source').removeClass('dragging-source');
                     window.an_item_is_being_dragged = false;
                     $('.window-app-iframe').css('pointer-events', 'auto');
                     return false;
@@ -670,14 +784,15 @@ const TabFiles = {
                         const alert_resp = await UIAlert({
                             message: i18n('confirm_delete_multiple_items'),
                             buttons: [
-                                { label: i18n('delete'), type: 'primary' },
-                                { label: i18n('cancel') },
+                                { label: i18n('delete'), value: 'delete', type: 'primary' },
+                                { label: i18n('cancel'), value: 'cancel' },
                             ],
                         });
-                        if ( alert_resp === 'Delete' ) {
+                        if ( alert_resp === 'delete' ) {
                             for ( const row of trashedItems.toArray() ) {
                                 await window.delete_item(row);
                             }
+                            await window.refresh_trash_state();
                         }
                     } else {
                         // Move to trash
@@ -746,11 +861,17 @@ const TabFiles = {
                     if ( _this.currentPath.startsWith(window.trash_path) && window.clipboard_op !== 'move' ) {
                         return false;
                     }
+                    // After the paste completes, refresh and highlight the
+                    // newly created rows — same treatment as uploads.
                     if ( window.clipboard_op === 'copy' ) {
-                        window.copy_clipboard_items(_this.currentPath, null);
+                        window.copy_clipboard_items(_this.currentPath, null).then(async pastedPaths => {
+                            await _this.renderDirectory(_this.currentPath, { consistency: 'strong' });
+                            _this.selectUploadedRows(pastedPaths ?? []);
+                        });
                     } else {
-                        _this.moveClipboardItems(_this.currentPath).then(() => {
-                            _this.renderDirectory(_this.currentPath);
+                        _this.moveClipboardItems(_this.currentPath).then(async pastedPaths => {
+                            await _this.renderDirectory(_this.currentPath, { consistency: 'strong' });
+                            _this.selectUploadedRows(pastedPaths ?? []);
                         });
                     }
                 }
@@ -974,9 +1095,10 @@ const TabFiles = {
         this.previewOpen = true;
         this.previewCurrentUid = uid;
 
-        // Close on click outside the popover
+        // Close on click outside the popover. Remove any prior handler first so
+        // repeated calls (image arrow-navigation) don't stack duplicate handlers.
         const _this = this;
-        $(document).on('click.imagepreview', (e) => {
+        $(document).off('click.imagepreview').on('click.imagepreview', (e) => {
             if ( ! $(e.target).closest('.image-preview-popover').length ) {
                 _this.closeImagePreview();
             }
@@ -1033,7 +1155,7 @@ const TabFiles = {
                 const history_item = window.dashboard_nav_history[index];
 
                 items.push({
-                    html: `<span>${history_item === window.home_path ? i18n('home') : path.basename(history_item)}</span>`,
+                    html: `<span>${history_item === window.home_path ? i18n('home') : html_encode(path.basename(history_item))}</span>`,
                     val: index,
                     onClick: function (e) {
                         window.dashboard_nav_history_current_position = e.value;
@@ -1074,7 +1196,7 @@ const TabFiles = {
                 const history_item = window.dashboard_nav_history[index];
 
                 items.push({
-                    html: `<span>${history_item === window.home_path ? i18n('home') : path.basename(history_item)}</span>`,
+                    html: `<span>${history_item === window.home_path ? i18n('home') : html_encode(path.basename(history_item))}</span>`,
                     val: index,
                     onClick: function (e) {
                         window.dashboard_nav_history_current_position = e.value;
@@ -1102,25 +1224,50 @@ const TabFiles = {
             _this.renderDirectory(target_path);
         });
 
+        // Spring-loaded navigation: holding a dragged item over back/forward/up
+        // navigates so the drag can continue in the newly shown directory.
+        const makeNavBtnSpringLoaded = (btn, navigate) => {
+            $(btn).droppable({
+                accept: '.row',
+                tolerance: 'pointer',
+                over: function (_event, ui) {
+                    if ( ! $(ui.draggable).hasClass('row') ) return;
+                    if ( $(btn).hasClass('path-btn-disabled') ) return;
+                    _this.startNavDwell(btn, navigate);
+                },
+                out: function (_event, _ui) {
+                    _this.clearNavDwell(btn);
+                },
+            });
+        };
+
+        makeNavBtnSpringLoaded(el_window_navbar_back_btn, () => {
+            if ( window.dashboard_nav_history_current_position <= 0 ) return false;
+            const target_path = window.dashboard_nav_history[window.dashboard_nav_history_current_position - 1];
+            if ( ! _this.canSpringLoadInto(target_path) ) return false;
+            window.dashboard_nav_history_current_position--;
+            _this.renderDirectory(target_path);
+        });
+
+        makeNavBtnSpringLoaded(el_window_navbar_forward_btn, () => {
+            if ( window.dashboard_nav_history_current_position >= window.dashboard_nav_history.length - 1 ) return false;
+            const target_path = window.dashboard_nav_history[window.dashboard_nav_history_current_position + 1];
+            if ( ! _this.canSpringLoadInto(target_path) ) return false;
+            window.dashboard_nav_history_current_position++;
+            _this.renderDirectory(target_path);
+        });
+
+        makeNavBtnSpringLoaded(el_window_navbar_up_btn, () => {
+            if ( _this.currentPath === '/' ) return false;
+            const target_path = path.resolve(path.join(_this.currentPath, '..'));
+            if ( ! _this.canSpringLoadInto(target_path) ) return false;
+            _this.pushNavHistory(target_path);
+            _this.renderDirectory(target_path);
+        });
+
         // New folder button
-        document.querySelector('.new-folder-btn').onclick = async () => {
-            if ( ! _this.currentPath ) return;
-            try {
-                const result = await puter.fs.mkdir({
-                    path: `${_this.currentPath}/New Folder`,
-                    rename: true,
-                    overwrite: false,
-                });
-                await _this.renderDirectory(_this.currentPath);
-                // Find and select the new folder, then activate rename
-                const newFolderRow = this.$el_window.find(`.files-tab .row[data-name="${result.name}"]`);
-                if ( newFolderRow.length > 0 ) {
-                    newFolderRow.addClass('selected');
-                    window.activate_item_name_editor(newFolderRow[0]);
-                }
-            } catch ( err ) {
-                // Folder creation failed silently
-            }
+        document.querySelector('.new-folder-btn').onclick = () => {
+            _this.createFolderInstant(_this.currentPath);
         };
 
         // Upload input element
@@ -1166,7 +1313,7 @@ const TabFiles = {
                     }
                 },
                 // success
-                success: function (items) {
+                success: async function (items) {
                     // Add action to actions_history for undo ability
                     const files = [];
                     if ( typeof items[Symbol.iterator] === 'function' ) {
@@ -1186,11 +1333,12 @@ const TabFiles = {
                     window.show_save_account_notice_if_needed();
                     // remove from active_uploads
                     delete window.active_uploads[opid];
-                    // refresh
-                    _this.renderDirectory(_this.currentPath, { consistency: 'strong' });
                     // Clear the input value to allow uploading the same file again
                     fileInput.value = '';
                     document.querySelector('form').reset();
+                    // refresh, then highlight the uploaded items
+                    await _this.renderDirectory(_this.currentPath, { consistency: 'strong' });
+                    _this.selectUploadedRows(files);
                 },
                 // error
                 error: async function (err) {
@@ -1225,9 +1373,9 @@ const TabFiles = {
             fileInput.click();
         };
 
-        // View toggle button
-        document.querySelector('.view-toggle-btn').onclick = () => {
-            this.toggleView();
+        // View button (shows dropdown menu: list / compact grid / grid)
+        document.querySelector('.view-toggle-btn').onclick = (e) => {
+            this.showViewMenu(e);
         };
 
         // Sort button (shows dropdown menu)
@@ -1279,12 +1427,13 @@ const TabFiles = {
                 }
             }
             _this.updateFooterStats();
+            await window.refresh_trash_state();
         });
 
         // Download button
         $actions.find('.download-btn').on('click', function () {
             const selectedRows = document.querySelectorAll('.files-tab .row.selected');
-            if ( selectedRows.length >= 2 ) {
+            if ( selectedRows.length > 0 ) {
                 window.zipItems(Array.from(selectedRows), _this.currentPath, true);
             }
         });
@@ -1326,14 +1475,15 @@ const TabFiles = {
                 const confirmed = await UIAlert({
                     message: i18n('confirm_delete_multiple_items'),
                     buttons: [
-                        { label: i18n('delete'), type: 'primary' },
-                        { label: i18n('cancel') },
+                        { label: i18n('delete'), value: 'delete', type: 'primary' },
+                        { label: i18n('cancel'), value: 'cancel' },
                     ],
                 });
-                if ( confirmed === 'Delete' ) {
+                if ( confirmed === 'delete' ) {
                     for ( const row of selectedRows ) {
                         await window.delete_item(row);
                     }
+                    await window.refresh_trash_state();
                 }
             } else {
                 window.move_items(Array.from(selectedRows), window.trash_path);
@@ -1429,7 +1579,8 @@ const TabFiles = {
 
             $(document).on('mouseup.colresize', function () {
                 $(document).off('mousemove.colresize mouseup.colresize');
-                puter.kv.set('column_widths', JSON.stringify(_this.columnWidths));
+                puter.kv.set('column_widths', JSON.stringify(_this.columnWidths))
+                    .catch(err => console.warn('Could not save column_widths:', err));
             });
         });
 
@@ -1449,7 +1600,7 @@ const TabFiles = {
                     const fullName = $(this).attr('data-name');
                     if ( fullName ) {
                         const textWidth = measureTextWidth(fullName) + padding;
-                        maxWidth = Math.max(maxWidth + 10, textWidth);
+                        maxWidth = Math.max(maxWidth, textWidth);
                     }
                 });
             } else if ( column === 'size' ) {
@@ -1457,7 +1608,7 @@ const TabFiles = {
                     const text = $(this).text();
                     if ( text ) {
                         const textWidth = measureTextWidth(text) + padding;
-                        maxWidth = Math.max(maxWidth + 10, textWidth);
+                        maxWidth = Math.max(maxWidth, textWidth);
                     }
                 });
             } else if ( column === 'modified' ) {
@@ -1465,7 +1616,7 @@ const TabFiles = {
                     const text = $(this).text();
                     if ( text ) {
                         const textWidth = measureTextWidth(text) + padding;
-                        maxWidth = Math.max(maxWidth + 10, textWidth);
+                        maxWidth = Math.max(maxWidth, textWidth);
                     }
                 });
             }
@@ -1473,7 +1624,8 @@ const TabFiles = {
             // Apply the new width
             _this.columnWidths[column] = Math.ceil(maxWidth);
             _this.applyColumnWidths();
-            puter.kv.set('column_widths', JSON.stringify(_this.columnWidths));
+            puter.kv.set('column_widths', JSON.stringify(_this.columnWidths))
+                .catch(err => console.warn('Could not save column_widths:', err));
         });
     },
 
@@ -1538,7 +1690,7 @@ const TabFiles = {
                     $name.text(fullName);
                 }
             });
-        } else if ( this.currentView === 'grid' ) {
+        } else if ( this.isGridView() ) {
             // Apply middle-truncation in grid view
             $filesTab.find('.files.files-grid-view .row .item-name').each(function () {
                 const $name = $(this);
@@ -1697,7 +1849,11 @@ const TabFiles = {
         if ( $existingRows.length === 0 ) return;
 
         const newIsDir = !!file.is_dir;
-        const newName = (file.name || '').toLowerCase();
+        // Compare on the display name (data-name = metadata.original_name || name),
+        // matching sortFiles and the existing rows below. Using raw file.name here
+        // mis-sorts trashed items, whose name is the UID and whose real name lives
+        // in metadata.original_name.
+        const newName = ($newRow.attr('data-name') || file.name || '').toLowerCase();
         const newSize = file.size || 0;
         const newModified = file.modified || 0;
         const sortColumn = this.sortColumn;
@@ -1744,6 +1900,175 @@ const TabFiles = {
     },
 
     /**
+     * Puts the "No files in this directory." notice back when the listing has
+     * no rows left. The incremental add paths drop it before inserting their
+     * first row, so a create that is then undone (mkdir rejected) has to be
+     * able to restore it without refetching the directory.
+     *
+     * @returns {void}
+     */
+    renderEmptyPlaceholderIfNeeded () {
+        const $files = this.$el_window.find('.files-tab .files');
+        if ( $files.find('.item').length > 0 ) return;
+        // Match the notice by its own class: the loading overlay is a sibling
+        // in here too, and treating that as "already showing something" would
+        // leave the pane blank once the spinner is taken away.
+        if ( $files.find('.files-empty-notice').length > 0 ) return;
+        $files.append(`<div class="files-empty-notice" style="
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        ">
+            No files in this directory.
+        </div>`);
+    },
+
+    /**
+     * Creates a folder in `targetPath`, putting its row on screen with the
+     * name editor open right away instead of after the mkdir round-trip — on a
+     * slow connection that wait is seconds of nothing happening.
+     *
+     * The row starts as a placeholder: a locally predicted name (see
+     * {@link dedupedName}) and a temporary uid, marked `data-pending`. When
+     * mkdir answers, the real fsentry is merged into the very object the row's
+     * listeners closed over, so rename/open/menus see the server identity from
+     * then on. The in-flight promise is parked on the row because renaming is
+     * the next thing the user does and it needs the real uid — `rename()` in
+     * createItemListeners() awaits it. If mkdir fails, the row is taken back.
+     *
+     * @param {string} targetPath - directory to create the folder in
+     * @returns {Promise<void>}
+     */
+    async createFolderInstant (targetPath) {
+        const _this = this;
+        if ( ! targetPath ) return;
+
+        // A listing rebuild is already in flight. renderDirectory() clears
+        // `.files` before its readdir resolves, so a row drawn now survives the
+        // clear and ends up stranded in whatever directory the rebuild lands
+        // on — a row for `targetPath/New Folder` sitting in another folder's
+        // listing, with the rename editor open on it. Drop the click instead,
+        // exactly as renderDirectory drops navigation clicks while it renders.
+        if ( this.renderingDirectory ) return;
+
+        // Invoked from a sidebar or breadcrumb menu for a folder that isn't
+        // the one on screen — go there first, so the row (and the rename that
+        // follows) happens where the folder lives rather than as a phantom row
+        // in the current listing.
+        if ( targetPath !== this.currentPath ) {
+            this.pushNavHistory(targetPath);
+            await this.renderDirectory(targetPath, { consistency: 'strong' });
+            if ( this.currentPath !== targetPath ) return;
+        }
+
+        const takenNames = this.$el_window.find('.files-tab .files .item')
+            .map((_i, row) => $(row).attr('data-name')).get();
+        const placeholderName = dedupedName('New Folder', takenNames);
+        const placeholder = {
+            uid: `pending-${window.global_element_id++}`,
+            name: placeholderName,
+            path: `${targetPath}/${placeholderName}`,
+            is_dir: true,
+            immutable: false,
+            size: 0,
+            modified: Math.round(Date.now() / 1000),
+        };
+
+        // mkdir's item.added is delivered to this client too (the event carries
+        // no original_client_socket_id to filter on), and until mkdir answers
+        // the row's uid is a placeholder the dedupe check in UIDashboardFileItem
+        // can't match — so without this we'd end up with two rows.
+        this._creatingItem++;
+
+        // Drop the "No files in this directory." placeholder before inserting
+        // the first row, otherwise it stays and overlaps the new item.
+        this.$el_window.find('.files-tab .files > div:not(.item)').remove();
+
+        await this.renderItem(placeholder);
+        const $row = this.$el_window.find(`.files-tab .files .item[data-uid='${placeholder.uid}']`);
+        if ( $row.length === 0 ) {
+            this._creatingItem--;
+            return;
+        }
+
+        $row.attr('data-pending', '1');
+        this.insertAtSortedPosition($row, placeholder);
+        this.applyColumnWidths();
+        this.updateFooterStats();
+
+        this.$el_window.find('.files-tab .row.selected').removeClass('selected');
+        $row.addClass('selected');
+        window.activate_item_name_editor($row[0]);
+
+        let detached = null;
+        const pending = (async () => {
+            try {
+                // Ask for the plain name and let the server dedupe, exactly as
+                // before — `placeholderName` is only what we drew in the
+                // meantime, never what we request.
+                const result = await puter.fs.mkdir({
+                    path: `${targetPath}/New Folder`,
+                    rename: true,
+                    overwrite: false,
+                });
+
+                // Re-rendered out from under us (navigation, refresh) while the
+                // request was in flight. The rebuilt listing may predate the
+                // folder, and the guard below suppressed its item.added, so
+                // hand it to the incremental adder once that guard lifts.
+                if ( ! document.body.contains($row[0]) ) {
+                    detached = result;
+                    return;
+                }
+
+                // In place, because createItemListeners() closed over this
+                // object — that is what hands the row its real uid and path.
+                Object.assign(placeholder, result);
+
+                $row.attr('data-uid', result.uid);
+                $row.attr('data-path', result.path);
+                $row.attr('data-modified', result.modified);
+                $row.removeAttr('data-pending');
+
+                // Our prediction lost a race with another client. Correct the
+                // row, but never over text the user has started typing.
+                if ( result.name !== placeholderName ) {
+                    const $editor = $row.find('.item-name-editor');
+                    $row.attr('data-name', result.name);
+                    $row.find('.item-name').text(result.name);
+                    if ( $editor.val() === placeholderName ) {
+                        $editor.val(result.name);
+                        if ( $editor.is(':focus') ) $editor.select();
+                    }
+                }
+            } catch ( err ) {
+                // The row promised a folder that doesn't exist — take it back
+                // and say why, rather than letting it vanish unexplained.
+                $row.remove();
+                _this.renderEmptyPlaceholderIfNeeded();
+                _this.updateFooterStats();
+                if ( err?.code === 'directory_depth_limit_exceeded' ) {
+                    UIAlert({ message: i18n('directory_depth_limit_exceeded') });
+                } else if ( err?.message ) {
+                    UIAlert(err.message);
+                }
+            } finally {
+                _this._creatingItem--;
+                if ( detached ) window.UIDashboardFileItem(detached);
+            }
+        })();
+
+        $row[0]._pendingCreate = pending;
+        await pending;
+    },
+
+    /**
      * Handles sort column selection or direction toggle.
      *
      * Clicking the same column toggles direction; clicking a new column
@@ -1760,8 +2085,10 @@ const TabFiles = {
             this.sortDirection = 'asc';
         }
 
-        await puter.kv.set('sort_column', this.sortColumn);
-        await puter.kv.set('sort_direction', this.sortDirection);
+        await puter.kv.set('sort_column', this.sortColumn)
+            .catch(err => console.warn('Could not save sort_column:', err));
+        await puter.kv.set('sort_direction', this.sortDirection)
+            .catch(err => console.warn('Could not save sort_direction:', err));
 
         this.updateSortIndicators();
         this.renderDirectory(this.currentPath);
@@ -1798,20 +2125,75 @@ const TabFiles = {
     async renderDirectory (target, options = {}) {
         if ( this.renderingDirectory ) return;
         this.renderingDirectory = true;
-        this.$el_window.find('.files-tab .files').html('');
-        this.showSpinner();
         const _this = this;
 
-        document.querySelectorAll('.files-tab .row.selected').forEach(r => {
-            r.classList.remove('selected');
-        });
+        // Re-rendering the directory already on screen (after an upload, sort
+        // change, undo, …) keeps the current rows visible while the fresh
+        // listing is fetched, then swaps the DOM in one pass — clearing up
+        // front would blank the pane for the whole network round-trip and
+        // read as flicker. Navigating to a different directory still clears
+        // immediately so the user gets instant feedback.
+        const isSameDirRefresh = typeof target === 'string' && target === this.currentPath;
+        const $files = this.$el_window.find('.files-tab .files');
+        const prevScrollTop = isSameDirRefresh ? $files.scrollTop() : 0;
+
+        const clearListing = () => {
+            $files.html('');
+            document.querySelectorAll('.files-tab .row.selected').forEach(r => {
+                r.classList.remove('selected');
+            });
+
+            // Drop the shift-click anchor — it points at a row that no longer
+            // exists, and a stale detached anchor makes the first shift-click
+            // after the render select nothing.
+            if ( window.latest_selected_item && ! document.body.contains(window.latest_selected_item) ) {
+                window.latest_selected_item = null;
+                window.active_element = null;
+            }
+        };
+
+        if ( ! isSameDirRefresh ) {
+            clearListing();
+            this.showSpinner();
+        }
 
         // Determine whether target is a path or uid
         const isPath = typeof target === 'string' && target.startsWith('/');
         const readdirArg = isPath
             ? { path: target, consistency: options.consistency || 'eventual' }
             : { uid: target, consistency: options.consistency || 'eventual' };
-        let directoryContents = await window.puter.fs.readdir(readdirArg);
+        let directoryContents;
+        try {
+            directoryContents = await window.puter.fs.readdir(readdirArg);
+        } catch ( err ) {
+            // readdir rejects on any backend error (permission, deleted dir,
+            // network). Without this, renderingDirectory would stay true and
+            // the guard above would block all further navigation.
+            console.error('Failed to read directory:', err);
+            // Replace whatever the pane shows (blank after navigation, the
+            // stale rows during a same-directory refresh) with a message
+            // rather than leaving it unexplained.
+            clearListing();
+            this.$el_window.find('.files-tab .files').html(`<div style="
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                pointer-events: none;
+                text-align: center;
+                padding: 0 16px;
+            ">This folder couldn't be opened.</div>`);
+            // The list was emptied above; without this the footer keeps the
+            // previous directory's item count over a pane with zero rows.
+            this.updateFooterStats();
+            this.hideSpinner();
+            this.renderingDirectory = false;
+            return;
+        }
         if ( ! directoryContents ) {
             this.hideSpinner();
             this.renderingDirectory = false;
@@ -1839,10 +2221,12 @@ const TabFiles = {
 
         this.updateSidebarSelection();
 
-        // Filter out hidden files/folders and AppData in home directory
+        // Filter out hidden files/folders and AppData in home directory.
+        // Trash is reachable from the sidebar; don't list it as a row too.
         directoryContents = directoryContents.filter(file => {
-            if ( file.name.startsWith('.') ) return false;
+            if ( ! isEntryVisible(file.name, showHiddenFiles()) ) return false;
             if ( file.name === 'AppData' && this.currentPath === window.home_path ) return false;
+            if ( file.path === window.trash_path ) return false;
             return true;
         });
 
@@ -1880,6 +2264,12 @@ const TabFiles = {
                 tolerance: 'pointer',
 
                 drop: async function (event, ui) {
+                    // Clear dwell timer to prevent navigation after drop
+                    clearTimeout(_this.folderDwellTimer);
+                    _this.folderDwellTimer = null;
+                    _this.folderDwellTarget = null;
+                    $(dirnameElement).removeClass('dwell-opening');
+
                     const targetPath = $(this).attr('data-path');
                     const draggedPath = $(ui.draggable).attr('data-path');
 
@@ -1898,7 +2288,7 @@ const TabFiles = {
                     // Collect all items to move (primary + any selected clones)
                     const itemsToMove = [ui.draggable[0]];
                     $('.item-selected-clone').each(function () {
-                        const sourceId = $(this).attr('data-id');
+                        const sourceId = $(this).find('.row').attr('data-id');
                         const sourceItem = document.querySelector(`.row[data-id="${sourceId}"]`);
                         if ( sourceItem ) itemsToMove.push(sourceItem);
                     });
@@ -1923,31 +2313,36 @@ const TabFiles = {
                 over: function (_event, ui) {
                     if ( $(ui.draggable).hasClass('row') ) {
                         $(this).addClass('drop-target');
+
+                        // Holding over an ancestor breadcrumb navigates to it
+                        if ( clickedPath !== _this.currentPath && _this.canSpringLoadInto(clickedPath) ) {
+                            _this.startNavDwell(dirnameElement, () => {
+                                _this.pushNavHistory(clickedPath);
+                                _this.renderDirectory(clickedPath);
+                            });
+                        }
                     }
                 },
 
                 out: function (_event, ui) {
                     if ( $(ui.draggable).hasClass('row') ) {
                         $(this).removeClass('drop-target');
+                        _this.clearNavDwell(dirnameElement);
                     }
                 },
             });
         });
 
+        // Same-directory refresh: the stale rows stayed on screen during the
+        // fetch; swap them for the fresh listing now that it's here. The
+        // clear and the appends below run without an intervening task, so
+        // the browser paints the old and new listing back to back.
+        if ( isSameDirRefresh ) {
+            clearListing();
+        }
+
         if ( directoryContents.length === 0 ) {
-            this.$el_window.find('.files-tab .files').append(`<div style="
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                pointer-events: none;
-            ">
-                No files in this directory.
-            `);
+            this.renderEmptyPlaceholderIfNeeded();
             this.updateFooterStats();
             this.updateNavButtonStates();
             this.hideSpinner();
@@ -1956,11 +2351,21 @@ const TabFiles = {
         }
 
         const sortedContents = this.sortFiles(directoryContents);
-        await Promise.all(sortedContents.map(file => this.renderItem(file)));
+        // allSettled so one item that fails to render can't reject the batch,
+        // which would skip cleanup and leave the tab stuck (renderingDirectory).
+        await Promise.allSettled(sortedContents.map(file => this.renderItem(file)));
 
         this.applyColumnWidths();
         this.updateFooterStats();
         this.updateNavButtonStates();
+        this.updateOpenFileDots();
+
+        // A refresh must not jump the view back to the top — put the scroll
+        // position back where the user had it.
+        if ( isSameDirRefresh ) {
+            $files.scrollTop(prevScrollTop);
+        }
+
         this.hideSpinner();
         this.renderingDirectory = false;
     },
@@ -1977,45 +2382,64 @@ const TabFiles = {
     async renderItem (file) {
         // For trashed items, use original_name from metadata if available
         const item_id = window.global_element_id++;
-        const metadata = JSON.parse(file.metadata) || {};
+        // metadata is a client-writable, untrusted string stored verbatim, so
+        // it may be '', undefined, or malformed. Guard the parse (as item_icon.js
+        // does) — an unguarded throw here aborts the whole directory render.
+        let metadata = {};
+        try {
+            if ( file.metadata ) metadata = JSON.parse(file.metadata) || {};
+        } catch {
+            metadata = {};
+        }
         const displayName = metadata.original_name || file.name;
         let website_url = window.determine_website_url(file.path);
-        const is_shared_with_me = (file.path !== `/${window.user.username}` && !file.path.startsWith(`/${window.user.username}/`));
+        // Normalize is_shortcut to 0/1. Directory listings return it as a number,
+        // but the puter.fs.upload() result used to render newly-created items omits
+        // it, and an undefined value trips the `!== 0` badge check below (showing a
+        // phantom shortcut badge on every new file). Coerce to a plain 0/1 here.
+        const is_shortcut = file.is_shortcut ? 1 : 0;
         const is_worker = file.workers?.length > 0;
         const worker_url = is_worker ? file.workers[0]?.address : '';
-        const icon = file.is_dir ? `<img src="${html_encode(window.icons['folder.svg'])}"/>` : ((file.thumbnail && this.currentView === 'grid') ? `<img src="${file.thumbnail}" alt="${displayName}" />` : this.determineIcon(file));
+        const iconResult = await item_icon(file);
+        const icon = `<img src="${html_encode(iconResult.image)}"/>`;
         const row = document.createElement("div");
-        row.setAttribute('class', `item row ${file.is_dir ? 'folder' : 'file'}`);
+        // A dot-file only reaches this point when the preference reveals it;
+        // `item-revealed` dims it the same way the desktop Explorer does.
+        const revealedClass = isHiddenName(file.name) ? ' item-revealed' : '';
+        row.setAttribute('class', `item row ${file.is_dir ? 'folder' : 'file'}${revealedClass}`);
         row.setAttribute("data-id", item_id);
         row.setAttribute("data-name", displayName);
         row.setAttribute("data-uid", file.uid);
         row.setAttribute("data-is_dir", file.is_dir ? "1" : "0");
         row.setAttribute("data-is_trash", file.is_trash ? "1" : "0");
         row.setAttribute("data-has_website", file.has_website ? "1" : "0");
-        row.setAttribute("data-website_url", website_url ? html_encode(website_url) : '');
+        // setAttribute stores values literally (no HTML parsing), so values must
+        // stay raw — encoding here would leave e.g. `&amp;` inside data-path and
+        // break every fs operation that reads the attribute back.
+        row.setAttribute("data-website_url", website_url || '');
         row.setAttribute("data-immutable", file.immutable ? "1" : "0");
-        row.setAttribute("data-is_shortcut", file.is_shortcut);
-        row.setAttribute("data-shortcut_to", html_encode(file.shortcut_to));
-        row.setAttribute("data-shortcut_to_path", html_encode(file.shortcut_to_path));
-        row.setAttribute("data-is_worker", is_worker !== undefined ? "1" : "0");
-        row.setAttribute("data-worker_url", is_worker !== undefined ? worker_url : "0");
+        row.setAttribute("data-is_shortcut", is_shortcut);
+        row.setAttribute("data-shortcut_to", file.shortcut_to ?? '');
+        row.setAttribute("data-shortcut_to_path", file.shortcut_to_path ?? '');
+        row.setAttribute("data-is_worker", is_worker ? "1" : "0");
+        row.setAttribute("data-worker_url", is_worker ? worker_url : "0");
         row.setAttribute("data-sortable", file.sortable ?? 'true');
         row.setAttribute("data-metadata", JSON.stringify(metadata));
-        row.setAttribute("data-sort_by", html_encode(file.sort_by) ?? 'name');
+        row.setAttribute("data-sort_by", file.sort_by ?? 'name');
         row.setAttribute("data-size", file.size);
-        row.setAttribute("data-type", html_encode(file.type) ?? '');
+        row.setAttribute("data-type", file.type ?? '');
         row.setAttribute("data-modified", file.modified);
-        row.setAttribute("data-associated_app_name", html_encode(file.associated_app_name) ?? '');
-        row.setAttribute("data-path", html_encode(file.path));
+        row.setAttribute("data-associated_app_name", file.associated_app?.name ?? '');
+        row.setAttribute("data-path", file.path);
         row.innerHTML = `
             <div class="item-checkbox"><span class="checkbox-icon"></span></div>
             <div class="item-icon">
                 ${icon}
             </div>
             <div class="item-badges">
-                <img class="item-badge item-has-website-badge long-hover" 
-                    style="${file.has_website && file.workers.length === 0 ? 'display:block;' : ''}" 
-                    src="${html_encode(window.icons['world.svg'])}" 
+                <img class="item-badge item-has-website-badge long-hover"
+                    style="${file.has_website && !is_worker ? 'display:block;' : ''}"
+                    src="${html_encode(window.icons['world.svg'])}"
                     data-item-id="${item_id}"
                 />
                 <img class="item-badge item-has-website-url-badge" 
@@ -2023,23 +2447,8 @@ const TabFiles = {
                     src="${html_encode(window.icons['link.svg'])}" 
                     data-item-id="${item_id}"
                 >
-                <img class="item-badge item-badge-has-permission" 
-                    style="display: ${ is_shared_with_me ? 'block' : 'none'};
-                        background-color: #ffffff;
-                        padding: 2px;" src="${html_encode(window.icons['shared.svg'])}" 
-                    data-item-id="${item_id}"
-                    title="A user has shared this item with you."
-                />
-                <img class="item-badge item-is-shared" 
-                    style="background-color: #ffffff; padding: 2px; ${!is_shared_with_me && file.is_shared ? 'display:block;' : ''}" 
-                    src="${html_encode(window.icons['owner-shared.svg'])}" 
-                    data-item-id="${item_id}"
-                    data-item-uid="${file.uid}"
-                    data-item-path="${html_encode(file.path)}"
-                    title="You have shared this item with at least one other user."
-                />
-                <img class="item-badge item-shortcut" 
-                    style="background-color: #ffffff; padding: 2px; ${file.is_shortcut !== 0 ? 'display:block;' : ''}" 
+                <img class="item-badge item-shortcut"
+                    style="background-color: #ffffff; padding: 2px; ${is_shortcut !== 0 ? 'display:block;' : ''}"
                     src="${html_encode(window.icons['shortcut.svg'])}" 
                     data-item-id="${item_id}"
                     title="Shortcut"
@@ -2051,8 +2460,8 @@ const TabFiles = {
                 >
             </div>
             <div class="item-name-wrapper">
-                <pre class="item-name">${displayName}</pre>
-                <textarea class="item-name-editor hide-scrollbar" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" data-gramm_editor="false">${displayName}</textarea>
+                <pre class="item-name">${html_encode(displayName)}</pre>
+                <textarea class="item-name-editor hide-scrollbar" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" data-gramm_editor="false">${html_encode(displayName)}</textarea>
             </div>
             <div class="col-spacer"></div>
             <div class="item-metadata">
@@ -2069,114 +2478,28 @@ const TabFiles = {
     },
 
     /**
-     * Determines the appropriate icon for a file based on its extension.
+     * Toggles the open-file dot on rows whose file is currently open in an
+     * app window — visible or minimized. Matches each row's uid (shortcuts
+     * resolve to their target) against the data-file_uid that launch_app
+     * stamps on app windows. In dashboard mode the row doubles as that
+     * window's switcher (clicking it restores instead of relaunching — see
+     * open_item.js), so the dot marks where a click will return, not launch.
      *
-     * @param {Object} file - The file object containing the filename
-     * @returns {string} HTML string for the icon image element
+     * @returns {void}
      */
-    determineIcon (file) {
-        const extension = file.name.split('.').pop().toLowerCase();
-        switch ( extension ) {
-            case 'm4a':
-            case 'ogg':
-            case 'aac':
-            case 'flac':
-                return `<img src="${html_encode(window.icons['file-audio.svg'])}"/>`;
-            case 'cpp':
-                return `<img src="${html_encode(window.icons['file-cpp.svg'])}"/>`;
-            case 'css':
-                return `<img src="${html_encode(window.icons['file-css.svg'])}"/>`;
-            case 'csv':
-                return `<img src="${html_encode(window.icons['file-csv.svg'])}"/>`;
-            case 'doc':
-            case 'docx':
-                return `<img src="${html_encode(window.icons['file-word.svg'])}"/>`;
-            case 'exe':
-                return `<img src="${html_encode(window.icons['file-exe.svg'])}"/>`;
-            case 'gzip':
-                return `<img src="${html_encode(window.icons['file-gzip.svg'])}"/>`;
-            case 'html':
-                return `<img src="${html_encode(window.icons['file-html.svg'])}"/>`;
-            case 'jpg':
-            case 'jpeg':
-            case 'png':
-            case 'webp':
-            case 'gif':
-                return `<img src="${html_encode(window.icons['file-image.svg'])}"/>`;
-            case 'jar':
-                return `<img src="${html_encode(window.icons['file-jar.svg'])}"/>`;
-            case 'java':
-                return `<img src="${html_encode(window.icons['file-pdf.svg'])}"/>`;
-            case 'js':
-                return `<img src="${html_encode(window.icons['file-js.svg'])}"/>`;
-            case 'json':
-                return `<img src="${html_encode(window.icons['file-json.svg'])}"/>`;
-            case 'jsp':
-                return `<img src="${html_encode(window.icons['file-jsp.svg'])}"/>`;
-            case 'log':
-                return `<img src="${html_encode(window.icons['file-log.svg'])}"/>`;
-            case 'md':
-                return `<img src="${html_encode(window.icons['file-md.svg'])}"/>`;
-            case 'mp3':
-                return `<img src="${html_encode(window.icons['file-mp3.svg'])}"/>`;
-            case 'otf':
-                return `<img src="${html_encode(window.icons['file-otf.svg'])}"/>`;
-            case 'pdf':
-                return `<img src="${html_encode(window.icons['file-pdf.svg'])}"/>`;
-            case 'php':
-                return `<img src="${html_encode(window.icons['file-php.svg'])}"/>`;
-            case 'pptx':
-                return `<img src="${html_encode(window.icons['file-pptx.svg'])}"/>`;
-            case 'psd':
-                return `<img src="${html_encode(window.icons['file-psd.svg'])}"/>`;
-            case 'py':
-                return `<img src="${html_encode(window.icons['file-py.svg'])}"/>`;
-            case 'rss':
-                return `<img src="${html_encode(window.icons['file-rss.svg'])}"/>`;
-            case 'rtf':
-                return `<img src="${html_encode(window.icons['file-rtf.svg'])}"/>`;
-            case 'ruby':
-                return `<img src="${html_encode(window.icons['file-ruby.svg'])}"/>`;
-            case 'sketch':
-                return `<img src="${html_encode(window.icons['file-sketch.svg'])}"/>`;
-            case 'sql':
-                return `<img src="${html_encode(window.icons['file-sql.svg'])}"/>`;
-            case 'svg':
-                return `<img src="${html_encode(window.icons['file-svg.svg'])}"/>`;
-            case 'tar':
-                return `<img src="${html_encode(window.icons['file-tar.svg'])}"/>`;
-            case 'tpl':
-            case 'xltx':
-            case 'potx':
-            case 'tmpl':
-                return `<img src="${html_encode(window.icons['file-template.svg'])}"/>`;
-            case 'text':
-            case 'txt':
-                return `<img src="${html_encode(window.icons['file-text.svg'])}"/>`;
-            case 'tif':
-                return `<img src="${html_encode(window.icons['file-tif.svg'])}"/>`;
-            case 'tiff':
-                return `<img src="${html_encode(window.icons['file-tiff.svg'])}"/>`;
-            case 'ttf':
-                return `<img src="${html_encode(window.icons['file-ttf.svg'])}"/>`;
-            case 'mp4':
-            case 'avi':
-            case 'mov':
-            case 'wmf':
-            case 'mkv':
-            case 'webm':
-                return `<img src="${html_encode(window.icons['file-video.svg'])}"/>`;
-            case 'wav':
-                return `<img src="${html_encode(window.icons['file-wav.svg'])}"/>`;
-            case 'xlsx':
-                return `<img src="${html_encode(window.icons['file-xlsx.svg'])}"/>`;
-            case 'xml':
-                return `<img src="${html_encode(window.icons['file-xml.svg'])}"/>`;
-            case 'zip':
-                return `<img src="${html_encode(window.icons['file-zip.svg'])}"/>`;
-            default:
-                return `<img src="${html_encode(window.icons['file.svg'])}"/>`;
+    updateOpenFileDots () {
+        if ( ! this.$el_window ) return;
+        const open_uids = new Set();
+        // The user's own windows only (user_facing_windows): a file an app
+        // opened in a helper it launched in the background is not a window
+        // the row can switch to, so the dot would point nowhere.
+        for ( const el_window of user_facing_windows($('.window[data-file_uid]')) ) {
+            open_uids.add($(el_window).attr('data-file_uid'));
         }
+        this.$el_window.find('.files-tab .files .row').each(function () {
+            const uid = ($(this).attr('data-shortcut_to') || $(this).attr('data-uid') || '').toLowerCase();
+            $(this).toggleClass('file-is-open', open_uids.has(uid));
+        });
     },
 
     /**
@@ -2199,10 +2522,28 @@ const TabFiles = {
         let rename_cancelled = false;
         let shift_clicked = false;
         let itemWasSelectedOnMousedown = false;
+        let lastPointerType = null;
+
+        // A row rendered ahead of its mkdir (see createFolderInstant) carries a
+        // placeholder uid and path, so anything that acts on the item itself —
+        // opening it, its menus, dragging it — has to sit out until the real
+        // fsentry arrives. Renaming is the exception: it is what the open name
+        // editor is for, and it waits on the promise instead.
+        const isPending = () => el_item.getAttribute('data-pending') === '1';
 
         el_item.onpointerdown = (e) => {
+            // Track pointer type so onclick and the menu handlers can
+            // distinguish touch from mouse — recorded before the early
+            // returns because the '⋯' menu routing needs it too.
+            lastPointerType = e.pointerType;
+
             if ( e.target.classList.contains('item-more') ) return;
             if ( el_item.classList.contains('header') ) return;
+
+            // On touch devices, skip all selection logic here.
+            // Taps are handled by onclick (opens item) and taphold (context menu),
+            // so pointerdown never accidentally selects while the user is scrolling.
+            if ( e.pointerType === 'touch' ) return;
 
             shift_clicked = false;
 
@@ -2214,61 +2555,89 @@ const TabFiles = {
                 return;
             }
 
-            // Handle Shift+Click for range selection
-            if ( e.shiftKey && window.latest_selected_item && window.latest_selected_item !== el_item ) {
-                e.preventDefault();
-                shift_clicked = true;
+            // Select the given rows (replacing the current selection unless
+            // additive) and make el_item the anchor. Shared by the range,
+            // no-anchor shift-click, and drag-handle paths so their selection
+            // bookkeeping can't drift apart.
+            const applySelection = (rows, additive = false) => {
+                if ( ! additive ) {
+                    el_item.parentElement.querySelectorAll('.row.selected').forEach(r => {
+                        r.classList.remove('selected');
+                    });
+                }
+                for ( const row of rows ) row.classList.add('selected');
+                window.latest_selected_item = el_item;
+                window.active_element = el_item;
+                window.active_item_container = el_item.closest('.files');
+                _this.updateFooterStats();
+            };
 
+            // Handle Shift+Click for range selection. Require the anchor to
+            // still be in this row list — a detached anchor (indexOf === -1)
+            // would otherwise set shift_clicked and then select nothing,
+            // leaving the click a no-op. The row lookup happens only under
+            // Shift: this handler is the hot path for every click in the list.
+            if ( e.shiftKey ) {
                 const allRows = $(el_item).parent().find('.row').toArray();
-                const clickedIndex = allRows.indexOf(el_item);
-                const lastSelectedIndex = allRows.indexOf(window.latest_selected_item);
+                const hasShiftAnchor = window.latest_selected_item
+                    && allRows.indexOf(window.latest_selected_item) !== -1;
+                if ( hasShiftAnchor && window.latest_selected_item !== el_item ) {
+                    e.preventDefault();
+                    shift_clicked = true;
 
-                if ( clickedIndex !== -1 && lastSelectedIndex !== -1 ) {
-                    const start = Math.min(clickedIndex, lastSelectedIndex);
-                    const end = Math.max(clickedIndex, lastSelectedIndex);
+                    const clickedIndex = allRows.indexOf(el_item);
+                    const lastSelectedIndex = allRows.indexOf(window.latest_selected_item);
 
-                    // Clear selection if no Ctrl/Cmd held
-                    if ( !e.ctrlKey && !e.metaKey ) {
-                        el_item.parentElement.querySelectorAll('.row.selected').forEach(r => {
-                            r.classList.remove('selected');
-                        });
+                    if ( clickedIndex !== -1 && lastSelectedIndex !== -1 ) {
+                        const start = Math.min(clickedIndex, lastSelectedIndex);
+                        const end = Math.max(clickedIndex, lastSelectedIndex);
+                        // Select the whole range; Ctrl/Cmd extends instead of
+                        // replacing.
+                        applySelection(allRows.slice(start, end + 1), e.ctrlKey || e.metaKey);
+                        return;
                     }
-
-                    // Select all items in range
-                    for ( let i = start; i <= end; i++ ) {
-                        allRows[i].classList.add('selected');
-                    }
-
-                    // Update latest selected to the clicked item
-                    window.latest_selected_item = el_item;
-                    window.active_element = el_item;
-                    window.active_item_container = el_item.closest('.files');
-                    _this.updateFooterStats();
+                } else if ( ! hasShiftAnchor ) {
+                    // Shift-click with no valid anchor (e.g. the first click
+                    // after navigating to a new directory): select just this
+                    // item and make it the anchor. onclick skips selection
+                    // while Shift is held, so without this the click would
+                    // select nothing. Ctrl/Cmd+Shift extends instead of
+                    // clearing.
+                    e.preventDefault();
+                    shift_clicked = true;
+                    applySelection([el_item], e.ctrlKey || e.metaKey);
                     return;
                 }
+                // Shift-click on the current anchor itself: deliberate no-op —
+                // it must not collapse an existing multi-selection.
             }
 
             // In select mode on mobile, treat taps like Ctrl+click (toggle selection)
             const isMobileSelectMode = (window.isMobile.phone || window.isMobile.tablet) && _this.selectModeActive;
 
-            // If clicking on .item-name, .item-icon, or .item-badges, select immediately so item drag works
+            // If clicking on .item-name, .item-icon, or .item-badges, select immediately so item drag works.
+            // On touch devices, these elements have pointer-events:none via CSS so this path
+            // won't be reached — touches land on .row instead, deferring selection to onclick.
             const isDragHandle = e.target.closest('.item-name, .item-icon, .item-badges');
             if ( e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !el_item.classList.contains('selected') && !isMobileSelectMode && isDragHandle ) {
-                el_item.parentElement.querySelectorAll('.row.selected').forEach(r => {
-                    r.classList.remove('selected');
-                });
-                el_item.classList.add('selected');
-                window.latest_selected_item = el_item;
-                window.active_element = el_item;
-                window.active_item_container = el_item.closest('.files');
+                applySelection([el_item]);
                 itemWasSelectedOnMousedown = true;
-                _this.updateFooterStats();
                 return;
             }
 
             // If item is NOT selected and no modifier keys: defer selection to click handler.
             // This allows rubberband selection to start when dragging from unselected items.
             if ( e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !el_item.classList.contains('selected') && !isMobileSelectMode ) {
+                window.active_element = el_item;
+                window.active_item_container = el_item.closest('.files');
+                return;
+            }
+
+            // A right-click must not change the selection: an unselected item
+            // gets the grey context-menu state instead (added by the
+            // contextmenu handler), and an existing selection is preserved
+            // so the multi-select menu still applies to it.
+            if ( e.button === 2 ) {
                 window.active_element = el_item;
                 window.active_item_container = el_item.closest('.files');
                 return;
@@ -2308,7 +2677,8 @@ const TabFiles = {
 
         el_item.onclick = (e) => {
             if ( e.target.classList.contains('item-more') ) {
-                this.handleMoreClick(el_item, file, e.target);
+                if ( isPending() ) return;
+                this.handleMoreClick(el_item, file, e.target, lastPointerType === 'touch');
                 return;
             }
 
@@ -2324,9 +2694,24 @@ const TabFiles = {
                 return;
             }
 
-            // On mobile in select mode, selection was already handled in pointerdown
-            // Just return early to prevent any further processing
-            if ( (window.isMobile.phone || window.isMobile.tablet) && _this.selectModeActive ) {
+            // On touch/mobile: tap opens the item directly, no selection step needed.
+            // Selection (and context menu) is handled via taphold.
+            // Use lastPointerType as primary signal (works even if isMobile misdetects).
+            if ( lastPointerType === 'touch' || window.isMobile.phone || window.isMobile.tablet ) {
+                // In select mode, tap toggles selection instead of opening
+                if ( _this.selectModeActive ) {
+                    el_item.classList.toggle('selected');
+                    window.latest_selected_item = el_item;
+                    _this.updateFooterStats();
+                    return;
+                }
+                if ( isPending() ) return;
+                if ( isFolder === "1" ) {
+                    _this.pushNavHistory(file.path);
+                    _this.renderDirectory(file.path);
+                } else {
+                    open_item({ item: el_item });
+                }
                 return;
             }
 
@@ -2353,24 +2738,13 @@ const TabFiles = {
                     }
                 }
             }
-
-            // On mobile, single tap opens folders (no double-tap on touch devices)
-            if ( window.isMobile.phone || window.isMobile.tablet ) {
-                // Normal mode: open the item
-                if ( isFolder === "1" ) {
-                    _this.pushNavHistory(file.path);
-                    _this.renderDirectory(file.path);
-                } else {
-                    open_item({ item: el_item });
-                }
-                el_item.classList.remove('selected');
-            }
         };
 
         el_item.ondblclick = (e) => {
             if ( e.target.classList.contains('item-name-editor') ) {
                 return;
             }
+            if ( isPending() ) return;
             if ( isFolder === "1" ) {
                 _this.pushNavHistory(file.path);
                 _this.renderDirectory(file.path);
@@ -2383,10 +2757,19 @@ const TabFiles = {
         // --------------------------------------------------------
         // Rename
         // --------------------------------------------------------
-        function rename () {
+        async function rename () {
             if ( rename_cancelled ) {
                 rename_cancelled = false;
                 return;
+            }
+
+            // The row may have been drawn before its mkdir answered; renaming
+            // needs the real uid, and the server's name is what we diff
+            // against, so read neither until the create has settled.
+            if ( el_item._pendingCreate ) {
+                await el_item._pendingCreate;
+                // mkdir failed and took the row with it.
+                if ( ! document.body.contains(el_item) ) return;
             }
 
             const old_name = $(el_item).attr('data-name');
@@ -2469,10 +2852,23 @@ const TabFiles = {
 
         // Right-click context menu handler (desktop) and taphold (touch devices)
         $(el_item).on('contextmenu taphold', async (e) => {
-            // Dismiss taphold on non-touch devices
-            if ( e.type === 'taphold' && !window.isMobile.phone && !window.isMobile.tablet ) {
+            // A taphold only counts when it came from an actual touch — the
+            // plugin (helpers.js) also fires it for a 1s mouse-button hold,
+            // which must stay inert, touchscreen or not.
+            if ( e.type === 'taphold' && lastPointerType !== 'touch' && !window.isMobile.phone && !window.isMobile.tablet ) {
                 return;
             }
+            // On iOS, both contextmenu and taphold can fire for the same long-press.
+            // Debounce to prevent duplicate modals.
+            if ( el_item._contextMenuShownAt && Date.now() - el_item._contextMenuShownAt < 500 ) {
+                e.preventDefault();
+                return;
+            }
+            if ( isPending() ) {
+                e.preventDefault();
+                return;
+            }
+            el_item._contextMenuShownAt = Date.now();
             e.preventDefault();
             e.stopPropagation();
 
@@ -2484,11 +2880,23 @@ const TabFiles = {
                 items = await _this.generateContextMenuItems(el_item, file);
             }
 
-            if ( window.isMobile.phone || window.isMobile.tablet ) {
+            // The touch sheet is for touch interactions and touch-first
+            // devices. A mouse right-click gets the desktop menu at the
+            // cursor — including on touch-capable laptops, whose right-clicks
+            // used to land in the sheet (centered over the row, nowhere near
+            // the pointer) via a maxTouchPoints check.
+            const touchInvoked = e.type === 'taphold' || lastPointerType === 'touch';
+            if ( window.isMobile.phone || window.isMobile.tablet || isTouchPrimaryDevice() || touchInvoked ) {
                 const modal = new ContextMenuModal();
-                modal.show(items, el_item.getBoundingClientRect());
+                modal.show(items, el_item.getBoundingClientRect(), { title: file.name });
             } else {
-                UIContextMenu({ items: items, position: { left: e.pageX, top: e.pageY } });
+                // Keep the row visually active while its menu is open — the
+                // pointer moves onto the menu, so :hover alone would drop it.
+                // Class managed manually rather than via parent_element, whose
+                // inline overflow side effects would break the row's layout.
+                const releaseCtxState = _this.markRowContextMenuOpen(el_item);
+                const menu = UIContextMenu({ items: items, position: { left: e.pageX, top: e.pageY } });
+                menu.onClose = releaseCtxState;
             }
         });
 
@@ -2499,22 +2907,31 @@ const TabFiles = {
             appendTo: 'body',
             refreshPositions: true,
             helper: function () {
-                const $clone = $(el_item).clone();
+                // Compact drag ghost: an icon+name chip near the cursor, with
+                // stacked sheets and a count badge when dragging a multi-selection.
+                const iconSrc = $(el_item).find('.item-icon img').attr('src');
+                const name = $(el_item).attr('data-name') || '';
+                const count = $(el_item).siblings('.row.selected').length + 1;
 
-                // Wrap in container structure so CSS selectors match
-                const viewClass = _this.currentView === 'grid' ? 'files-grid-view' : 'files-list-view';
-                const $wrapper = $(`<div class="dashboard-section-files"><div class="files-tab"><div class="files ${viewClass}"></div></div></div>`);
-                $wrapper.find('.files').append($clone);
+                const $ghost = $('<div class="files-drag-ghost"></div>');
+                if ( count > 2 ) $ghost.append('<div class="files-drag-ghost-sheet files-drag-ghost-sheet-2"></div>');
+                if ( count > 1 ) $ghost.append('<div class="files-drag-ghost-sheet files-drag-ghost-sheet-1"></div>');
 
-                // In grid view, set fixed width since the grid auto-fill
-                // doesn't work without a proper parent width context
-                if ( _this.currentView === 'grid' ) {
-                    $clone.css('width', $(el_item).outerWidth());
-                    $wrapper.find('.files').css('display', 'block');
+                const $card = $('<div class="files-drag-ghost-card"></div>');
+                $card.append($('<img class="files-drag-ghost-icon" alt="" draggable="false">').attr('src', iconSrc));
+                $card.append($('<span class="files-drag-ghost-name"></span>').text(name));
+                $ghost.append($card);
+
+                if ( count > 1 ) {
+                    $ghost.append($('<span class="files-drag-ghost-count"></span>').text(count));
                 }
 
-                return $wrapper;
+                return $ghost;
             },
+            // Anchor the chip just below-right of the pointer so it never
+            // obscures the drop target under the cursor.
+            cursorAt: { left: -14, top: -12 },
+            cursor: 'grabbing',
             revert: 'invalid',
             zIndex: 10000,
             scroll: false,
@@ -2522,13 +2939,20 @@ const TabFiles = {
             revertDuration: 100,
 
             start: function (_event, ui) {
+                // Returning false from here aborts the drag but skips the
+                // "stop" plugins, so the cursor plugin never restores the
+                // body cursor it already set to 'grabbing' — reset it on
+                // every abort path or the hand cursor sticks.
+
                 // Don't start drag if item wasn't already selected before mousedown;
                 // rubberband selection should handle this case instead.
                 if ( ! itemWasSelectedOnMousedown ) {
+                    $('body').css('cursor', '');
                     return false;
                 }
 
-                if ( $(el_item).attr('data-immutable') !== '0' ) {
+                if ( $(el_item).attr('data-immutable') !== '0' || isPending() ) {
+                    $('body').css('cursor', '');
                     return false;
                 }
 
@@ -2539,21 +2963,19 @@ const TabFiles = {
                     el_item.classList.add('selected');
                 }
 
-                ui.helper.addClass('selected');
+                // Dim the source rows while their drag is in flight
+                $(el_item).add($(el_item).siblings('.row.selected')).addClass('dragging-source');
 
-                // Clone other selected items with proper container structure
-                const viewClass = _this.currentView === 'grid' ? 'files-grid-view' : 'files-list-view';
+                // Clone other selected items as hidden data carriers — drop
+                // handlers read data attributes off these to move the whole
+                // selection. They are never displayed; the drag ghost itself
+                // conveys the multi-item count.
                 $(el_item).siblings('.row.selected').each(function () {
-                    const $clone = $(this).clone();
-                    const $wrapper = $(`<div class="dashboard-section-files item-selected-clone"><div class="files-tab"><div class="files ${viewClass}"></div></div></div>`);
-                    $wrapper.find('.files').append($clone);
-                    $wrapper.css('position', 'absolute').appendTo('body').hide();
+                    $('<div class="item-selected-clone"></div>')
+                        .append($(this).clone())
+                        .hide()
+                        .appendTo('body');
                 });
-
-                const itemCount = $('.item-selected-clone').length;
-                if ( itemCount > 0 ) {
-                    $('body').append(`<span class="draggable-count-badge">${itemCount + 1}</span>`);
-                }
 
                 window.an_item_is_being_dragged = true;
                 $('.window-app-iframe').css('pointer-events', 'none');
@@ -2574,30 +2996,6 @@ const TabFiles = {
                         ui.helper.data('dropped', true);
                         ui.helper.data('cancelled', true);
                     },
-                });
-            },
-
-            drag: function (event, ui) {
-                // Show helpers after 5px movement
-                if ( Math.abs(ui.originalPosition.top - ui.offset.top) > 5 ||
-                    Math.abs(ui.originalPosition.left - ui.offset.left) > 5 ) {
-                    ui.helper.show();
-                    $('.item-selected-clone').show();
-                    $('.draggable-count-badge').show();
-                }
-
-                $('.draggable-count-badge').css({
-                    top: event.pageY,
-                    left: event.pageX + 10,
-                });
-
-                $('.item-selected-clone').each(function (i) {
-                    $(this).css({
-                        left: ui.position.left + 3 * (i + 1),
-                        top: ui.position.top + 3 * (i + 1),
-                        'z-index': 999 - i,
-                        'opacity': 0.5 - i * 0.1,
-                    });
                 });
             },
 
@@ -2658,7 +3056,7 @@ const TabFiles = {
                 _this.springLoadedOriginalPath = null;
                 $('.drag-cancel-zone').remove();
                 $('.item-selected-clone').remove();
-                $('.draggable-count-badge').remove();
+                $('.row.dragging-source').removeClass('dragging-source');
                 window.an_item_is_being_dragged = false;
                 $('.window-app-iframe').css('pointer-events', 'auto');
             },
@@ -2677,6 +3075,12 @@ const TabFiles = {
                     _this.folderDwellTimer = null;
                     _this.folderDwellTarget = null;
 
+                    // A row drawn ahead of its mkdir has a predicted path, not
+                    // a real one. Moving into it would either fail or — because
+                    // move treats a non-existent destination as a rename target
+                    // — quietly rename the dragged file to "New Folder".
+                    if ( isPending() ) return;
+
                     const draggedPath = $(ui.draggable).attr('data-path');
                     if ( event.ctrlKey && draggedPath?.startsWith(`${window.trash_path}/`) ) {
                         return;
@@ -2687,7 +3091,7 @@ const TabFiles = {
                     const itemsToMove = [ui.draggable[0]];
 
                     $('.item-selected-clone').each(function () {
-                        const sourceId = $(this).attr('data-id');
+                        const sourceId = $(this).find('.row').attr('data-id');
                         const sourceItem = document.querySelector(`.row[data-id="${sourceId}"]`);
                         if ( sourceItem ) itemsToMove.push(sourceItem);
                     });
@@ -2717,6 +3121,11 @@ const TabFiles = {
 
                 over: function (_event, ui) {
                     if ( $(ui.draggable).hasClass('row') ) {
+                        // Still waiting on mkdir: don't offer it as a drop
+                        // target, and don't spring-load into a path that may
+                        // not exist yet (see the drop handler above).
+                        if ( isPending() ) return;
+
                         $(el_item).addClass('selected');
 
                         const _this = TabFiles;
@@ -2780,6 +3189,7 @@ const TabFiles = {
                     if ( ! e.dataTransfer?.types?.includes('Files') ) {
                         return;
                     }
+                    if ( isPending() ) return;
 
                     const targetPath = $(el_item).attr('data-path');
 
@@ -2803,6 +3213,7 @@ const TabFiles = {
                     if ( ! e.dataTransfer?.types?.includes('Files') ) {
                         return;
                     }
+                    if ( isPending() ) return;
 
                     const targetPath = $(el_item).attr('data-path');
 
@@ -2865,27 +3276,80 @@ const TabFiles = {
      * .item DOM elements that don't exist in the Dashboard.
      *
      * @param {string} destPath - The destination folder path
-     * @returns {Promise<void>}
+     * @returns {Promise<string[]>} Destination paths of the items that were
+     *     actually moved (skipped/failed items aren't listed) — callers use
+     *     these to highlight the new rows.
      */
     async moveClipboardItems (destPath) {
         if ( !window.clipboard || window.clipboard.length === 0 ) {
-            return;
+            return [];
         }
+
+        const { html_encode } = window;
+        const multiple_items = window.clipboard.length > 1;
+        const moved_item_paths = [];
+        // Set once the user picks "Replace all" on a conflict; later items
+        // then overwrite without asking again.
+        let overwrite_all = false;
 
         for ( const item of window.clipboard ) {
             // Handle both object format { path, uid } and legacy string format
             const source = item.uid || item.path || item;
-            try {
-                await puter.fs.move({
-                    source: source,
-                    destination: destPath,
-                });
-            } catch ( err ) {
-                console.error('Failed to move item:', err);
-            }
+            let overwrite = overwrite_all;
+            let keep_both = false;
+            let retry;
+            do {
+                retry = false;
+                try {
+                    const resp = await puter.fs.move({
+                        source: source,
+                        destination: destPath,
+                        overwrite: overwrite,
+                        // "Keep Both" conflict resolution: move under a
+                        // deduped "name (1)" style name instead of overwriting
+                        dedupeName: keep_both,
+                    });
+                    // The response carries the authoritative final path —
+                    // with "Keep Both" it differs from the source's name.
+                    if ( resp?.moved?.path ) {
+                        moved_item_paths.push(resp.moved.path);
+                    }
+                } catch ( err ) {
+                    // Same conflict resolution as the desktop's move_items:
+                    // ask, then retry with overwrite or leave the item be.
+                    if ( err.code === 'item_with_same_name_exists' ) {
+                        const alert_resp = await UIAlert({
+                            message: `<strong>${html_encode(err.entry_name)}</strong> already exists.`,
+                            buttons: [
+                                { label: i18n('replace'), type: 'primary', value: 'replace' },
+                                ... multiple_items ? [{ label: i18n('replace_all'), value: 'replace_all' }] : [],
+                                { label: i18n('keep_both'), value: 'keep_both' },
+                                ... multiple_items ? [{ label: i18n('skip'), value: 'skip' }] : [{ label: i18n('cancel'), value: 'cancel' }],
+                            ],
+                        });
+                        if ( alert_resp === 'replace' ) {
+                            overwrite = true;
+                            retry = true;
+                        } else if ( alert_resp === 'replace_all' ) {
+                            overwrite = true;
+                            overwrite_all = true;
+                            retry = true;
+                        } else if ( alert_resp === 'keep_both' ) {
+                            keep_both = true;
+                            retry = true;
+                        }
+                        // skip/cancel: the item stays where it was cut from
+                    } else {
+                        console.error('Failed to move item:', err);
+                        const item_name = String(item.path || source).split('/').pop();
+                        UIAlert(`<p>Moving <strong>${html_encode(item_name)}</strong></p>${html_encode(err.message ?? '')}`);
+                    }
+                }
+            } while ( retry );
         }
 
         window.clipboard = [];
+        return moved_item_paths;
     },
 
     /**
@@ -2895,11 +3359,16 @@ const TabFiles = {
      * @returns {string} Formatted size string (e.g., "1.5 MB")
      */
     formatFileSize (bytes) {
-        if ( bytes === 0 ) return '0 B';
+        const num = Number(bytes);
+        // Missing/invalid sizes (undefined, null, NaN) and non-positive values
+        // shouldn't render as "NaN undefined".
+        if ( ! Number.isFinite(num) || num <= 0 ) return '0 B';
         const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100 } ${ sizes[i]}`;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+        // Clamp the index so sizes beyond PB don't index past the array (which
+        // produced "1.5 undefined" for terabyte-plus files).
+        const i = Math.min(Math.floor(Math.log(num) / Math.log(k)), sizes.length - 1);
+        return `${Math.round((num / Math.pow(k, i)) * 100) / 100 } ${ sizes[i]}`;
     },
 
     /**
@@ -2954,12 +3423,11 @@ const TabFiles = {
             $footer.find('.files-footer-separator').css('display', 'none');
         }
 
-        // Show/hide floating action bar based on selection count
-        // In mobile select mode, show with 1+ items; otherwise require 2+
+        // The floating action bar only appears in mobile select mode;
+        // desktop multi-selection relies on the context menu instead.
         const isMobileSelectMode = (window.isMobile.phone || window.isMobile.tablet) && this.selectModeActive;
-        const minCountForActionBar = isMobileSelectMode ? 1 : 2;
 
-        if ( selectedCount >= minCountForActionBar ) {
+        if ( isMobileSelectMode && selectedCount >= 1 ) {
             $selectionActions.addClass('visible');
             this.updateSelectionActionsState(selectedRows);
         } else {
@@ -2968,37 +3436,103 @@ const TabFiles = {
     },
 
     /**
-     * Toggles between list and grid view modes.
+     * Whether the current view mode is one of the grid variants.
      *
-     * Persists the preference to storage.
+     * Both 'grid' and 'grid-sm' share the files-grid-view container class
+     * (and all grid behavior); 'grid-sm' adds a size-modifier class on top.
      *
+     * @returns {boolean}
+     */
+    isGridView () {
+        return this.currentView === 'grid' || this.currentView === 'grid-sm';
+    },
+
+    /**
+     * Container classes for the current view mode, e.g. for drag-ghost wrappers.
+     *
+     * @returns {string} Space-separated class list for the .files container
+     */
+    viewClass () {
+        if ( this.currentView === 'grid-sm' ) return 'files-grid-view files-grid-view-sm';
+        if ( this.currentView === 'grid' ) return 'files-grid-view';
+        return 'files-list-view';
+    },
+
+    /**
+     * Displays the view mode selection menu (list / compact grid / grid).
+     *
+     * @param {MouseEvent} e - The click event from the view button
      * @returns {void}
      */
-    toggleView () {
-        const $filesContainer = this.$el_window.find('.files-tab .files');
-        const $toggleBtn = this.$el_window.find('.view-toggle-btn');
-        const $tabContent = this.$el_window.find('.files-tab');
+    showViewMenu (e) {
+        const _this = this;
 
-        if ( this.currentView === 'list' ) {
-            this.currentView = 'grid';
-            $filesContainer.removeClass('files-list-view').addClass('files-grid-view');
-            $tabContent.addClass('files-grid-mode');
-            $toggleBtn.html(icons.list);
-            $toggleBtn.attr('title', 'Switch to list view');
-        } else {
-            this.currentView = 'list';
-            $filesContainer.removeClass('files-grid-view').addClass('files-list-view');
-            $tabContent.removeClass('files-grid-mode');
-            $toggleBtn.html(icons.grid);
-            $toggleBtn.attr('title', 'Switch to grid view');
-        }
+        const viewOptions = [
+            { mode: 'list', label: 'List' },
+            { mode: 'grid-sm', label: 'Compact Grid' },
+            { mode: 'grid', label: 'Grid' },
+        ];
 
-        puter.kv.set('view_mode', this.currentView);
+        const items = viewOptions.map(opt => {
+            return {
+                html: `<span>${opt.label}</span>`,
+                checked: _this.currentView === opt.mode,
+                onClick: () => {
+                    _this.setView(opt.mode);
+                },
+            };
+        });
+
+        UIContextMenu({
+            items: items,
+            position: { left: e.pageX, top: e.pageY },
+        });
+    },
+
+    /**
+     * Switches to the given view mode and persists the preference.
+     *
+     * @param {string} mode - 'list', 'grid', or 'grid-sm'
+     * @returns {void}
+     */
+    setView (mode) {
+        if ( this.currentView === mode ) return;
+        this.currentView = mode;
+        this.applyViewMode();
+
+        puter.kv.set('view_mode', mode)
+            .catch(err => console.warn('Could not save view_mode:', err));
 
         // Refresh content to update icons for the new view mode
         if ( this.currentPath ) {
             this.renderDirectory(this.currentPath);
         }
+    },
+
+    /**
+     * Applies the current view mode's classes and button icon to the DOM.
+     *
+     * @returns {void}
+     */
+    applyViewMode () {
+        const $filesContainer = this.$el_window.find('.files-tab .files');
+        const $toggleBtn = this.$el_window.find('.view-toggle-btn');
+        const $tabContent = this.$el_window.find('.files-tab');
+
+        $filesContainer.removeClass('files-list-view files-grid-view files-grid-view-sm');
+        if ( this.isGridView() ) {
+            $filesContainer.addClass(this.viewClass());
+            $tabContent.addClass('files-grid-mode');
+        } else {
+            $filesContainer.addClass('files-list-view');
+            $tabContent.removeClass('files-grid-mode');
+        }
+
+        // The button shows the active view's icon and opens the view menu
+        const btnIcon = this.currentView === 'grid' ? icons.grid
+            : this.currentView === 'grid-sm' ? icons.gridSmall
+                : icons.list;
+        $toggleBtn.html(btnIcon);
     },
 
     /**
@@ -3061,8 +3595,84 @@ const TabFiles = {
                 return;
             }
         }
+        // The drag may have sprung backward through history (Back button),
+        // leaving the original path ahead of the current position — walk
+        // forward too.
+        for ( let i = window.dashboard_nav_history_current_position + 1; i < window.dashboard_nav_history.length; i++ ) {
+            if ( window.dashboard_nav_history[i] === this.springLoadedOriginalPath ) {
+                window.dashboard_nav_history_current_position = i;
+                this.renderDirectory(this.springLoadedOriginalPath);
+                return;
+            }
+        }
         // Fallback: render the original path directly
         this.renderDirectory(this.springLoadedOriginalPath);
+    },
+
+    /**
+     * Starts a spring-loaded dwell timer for a drag hovering a navigation
+     * control (back/forward/up button or a breadcrumb segment). After the
+     * dwell delay the control's navigation runs — marked as a spring-loaded
+     * move so cancelling the drag returns to the original directory — and
+     * the drag continues in the newly shown directory.
+     *
+     * @param {HTMLElement} el - The hovered control element
+     * @param {Function} navigate - Performs the control's navigation; return false to skip
+     * @returns {void}
+     */
+    startNavDwell (el, navigate) {
+        const _this = this;
+        clearTimeout(this.folderDwellTimer);
+        $(el).addClass('dwell-opening');
+        this.folderDwellTarget = el;
+        this.folderDwellTimer = setTimeout(() => {
+            _this.folderDwellTimer = null;
+            _this.folderDwellTarget = null;
+            $(el).removeClass('dwell-opening');
+
+            const originalPath = _this.currentPath;
+            if ( navigate() === false ) return;
+
+            if ( ! _this.springLoadedActive ) {
+                _this.springLoadedOriginalPath = originalPath;
+            }
+            _this.springLoadedActive = true;
+            $('.drag-cancel-zone').show();
+
+            // Refresh jQuery UI droppable detection for the active drag
+            if ( $.ui.ddmanager && $.ui.ddmanager.current ) {
+                $.ui.ddmanager.current.helper.addClass('ui-draggable-dragging');
+                $.ui.ddmanager.prepareOffsets($.ui.ddmanager.current);
+            }
+        }, 700);
+    },
+
+    /**
+     * Cancels a pending nav-control dwell started by startNavDwell.
+     *
+     * @param {HTMLElement} el - The control element whose dwell to cancel
+     * @returns {void}
+     */
+    clearNavDwell (el) {
+        if ( this.folderDwellTarget === el ) {
+            clearTimeout(this.folderDwellTimer);
+            this.folderDwellTimer = null;
+            this.folderDwellTarget = null;
+        }
+        $(el).removeClass('dwell-opening');
+    },
+
+    /**
+     * Whether a path may be auto-opened by a spring-loaded drag. Trash is
+     * excluded, matching the folder and sidebar dwell behavior.
+     *
+     * @param {string} targetPath - The path the dwell would navigate to
+     * @returns {boolean}
+     */
+    canSpringLoadInto (targetPath) {
+        return !! targetPath &&
+            targetPath !== window.trash_path &&
+            ! targetPath.startsWith(`${window.trash_path}/`);
     },
 
     /**
@@ -3140,12 +3750,7 @@ const TabFiles = {
      * @returns {void}
      */
     updateDashboardUrl (filePath) {
-        // Use pushState to update URL without firing hashchange.
-        // The popstate listener in UIDashboard handles back/forward navigation.
-        const newHash = `#files${filePath}`;
-        if ( window.location.hash !== newHash ) {
-            history.pushState(null, '', newHash);
-        }
+        // Disabled: don't modify the browser URL when navigating files.
     },
 
     /**
@@ -3157,7 +3762,28 @@ const TabFiles = {
      * @param {Object} file - The file/folder object data
      * @returns {Promise<void>}
      */
-    async handleMoreClick (rowElement, file, targetElement) {
+    /**
+     * Marks a row as visually active for an open context menu and returns
+     * the release function for that menu's onClose. Menus can overlap on the
+     * same row (e.g. right-click while the '⋯' menu is still open): the newer
+     * menu takes ownership of the state, so the older menu's late close must
+     * not strip it — release only acts if its menu is still the owner.
+     *
+     * @param {HTMLElement} rowElement - The row the menu belongs to
+     * @returns {Function} Release callback to assign as the menu's onClose
+     */
+    markRowContextMenuOpen (rowElement) {
+        const token = (rowElement._ctxMenuToken = {});
+        rowElement.classList.add('has-open-contextmenu');
+        return () => {
+            if ( rowElement._ctxMenuToken === token ) {
+                rowElement.classList.remove('has-open-contextmenu');
+                delete rowElement._ctxMenuToken;
+            }
+        };
+    },
+
+    async handleMoreClick (rowElement, file, targetElement, fromTouch) {
         const selectedRows = document.querySelectorAll('.files-tab .row.selected');
 
         let items;
@@ -3168,13 +3794,31 @@ const TabFiles = {
             items = await this.generateContextMenuItems(rowElement, file);
         }
 
-        // Use mobile-friendly context menu on touch devices
-        if ( window.isMobile.phone || window.isMobile.tablet ) {
+        // The touch sheet for touch taps and touch-first devices; a mouse
+        // click gets the desktop menu anchored to the button, also on
+        // touch-capable laptops.
+        if ( window.isMobile.phone || window.isMobile.tablet || isTouchPrimaryDevice() || fromTouch ) {
             const targetRect = targetElement.getBoundingClientRect();
             const modal = new ContextMenuModal();
-            modal.show(items, targetRect);
+            modal.show(items, targetRect, { title: file.name });
         } else {
-            UIContextMenu({ items: items });
+            // The '⋯' click doesn't select the row, so without this class the
+            // row would lose all visual state the moment the pointer moves
+            // onto the menu (same treatment as the right-click handler).
+            const releaseCtxState = this.markRowContextMenuOpen(rowElement);
+            // Anchor the menu to the button — below it, right edges aligned —
+            // rather than at the pointer, and keep the button in its active
+            // state until the menu closes.
+            const btnRect = targetElement.getBoundingClientRect();
+            targetElement.classList.add('has-open-contextmenu');
+            const menu = UIContextMenu({
+                items: items,
+                position: { top: btnRect.bottom, right: btnRect.right },
+            });
+            menu.onClose = () => {
+                targetElement.classList.remove('has-open-contextmenu');
+                releaseCtxState();
+            };
         }
     },
 
@@ -3206,6 +3850,7 @@ const TabFiles = {
                     $(this).remove();
                 });
                 _this.updateFooterStats();
+                await window.refresh_trash_state();
             },
             onOpen: (el, fsentry) => {
                 // Custom open handler for Dashboard (avoids window_nav_history issues)
@@ -3215,6 +3860,15 @@ const TabFiles = {
                 } else {
                     open_item({ item: el });
                 }
+            },
+            onShowProperties: ({ name, path: item_path, uid }) => {
+                // Dashboard uses a responsive modal instead of the desktop UIWindow.
+                UIItemPropertiesModal({
+                    name,
+                    path: item_path,
+                    uid,
+                    $container: _this.$el_window,
+                });
             },
         });
 
@@ -3254,6 +3908,7 @@ const TabFiles = {
                         }
                     }
                     _this.updateFooterStats();
+                    await window.refresh_trash_state();
                 },
             });
             items.push('-');
@@ -3308,14 +3963,15 @@ const TabFiles = {
                     const confirmed = await UIAlert({
                         message: i18n('confirm_delete_multiple_items'),
                         buttons: [
-                            { label: i18n('delete'), type: 'primary' },
-                            { label: i18n('cancel') },
+                            { label: i18n('delete'), value: 'delete', type: 'primary' },
+                            { label: i18n('cancel'), value: 'cancel' },
                         ],
                     });
-                    if ( confirmed === 'Delete' ) {
+                    if ( confirmed === 'delete' ) {
                         for ( const row of selectedRows ) {
                             await window.delete_item(row);
                         }
+                        await window.refresh_trash_state();
                     }
                 },
             });
@@ -3347,6 +4003,7 @@ const TabFiles = {
         if ( ! targetPath ) return [];
 
         const isTrashFolder = targetPath === window.trash_path;
+        const isTrashedPath = targetPath.startsWith(`${window.trash_path}/`);
         const items = [];
 
         // New submenu (folder, text document, etc.) - not available in Trash
@@ -3357,32 +4014,9 @@ const TabFiles = {
             // Override the "New Folder" onClick to refresh and activate rename
             if ( newMenuItems.items && newMenuItems.items.length > 0 ) {
                 const folderItem = newMenuItems.items[0]; // First item is "New Folder"
-                folderItem.onClick = async () => {
+                folderItem.onClick = () => {
                     $('.context-menu').remove();
-                    _this._creatingItem = true;
-                    try {
-                        const result = await puter.fs.mkdir({
-                            path: `${targetPath}/New Folder`,
-                            rename: true,
-                            overwrite: false,
-                        });
-                        // Remove empty-directory placeholder if present
-                        _this.$el_window.find('.files-tab .files > div:not(.item)').remove();
-                        // Add the new folder incrementally
-                        await _this.renderItem(result);
-                        const $newRow = _this.$el_window.find(`.files-tab .files .item[data-uid='${result.uid}']`);
-                        if ( $newRow.length > 0 ) {
-                            _this.insertAtSortedPosition($newRow, result);
-                            _this.applyColumnWidths();
-                            _this.updateFooterStats();
-                            $newRow.addClass('selected');
-                            window.activate_item_name_editor($newRow[0]);
-                        }
-                    } catch ( err ) {
-                        // Folder creation failed silently
-                    } finally {
-                        _this._creatingItem = false;
-                    }
+                    _this.createFolderInstant(targetPath);
                 };
 
                 // Override other file creation items to intercept create_file,
@@ -3390,7 +4024,7 @@ const TabFiles = {
                 const wrapWithDashboardRename = (originalOnClick) => {
                     return async () => {
                         $('.context-menu').remove();
-                        _this._creatingItem = true;
+                        _this._creatingItem++;
 
                         // Temporarily intercept create_file to capture the upload promise
                         let uploadPromise = null;
@@ -3411,15 +4045,25 @@ const TabFiles = {
 
                             if ( uploadPromise ) {
                                 const result = await uploadPromise;
-                                // Remove empty-directory placeholder if present
-                                _this.$el_window.find('.files-tab .files > div:not(.item)').remove();
-                                // Add the new file incrementally
-                                await _this.renderItem(result);
+                                if ( targetPath === _this.currentPath ) {
+                                    // Remove empty-directory placeholder if present
+                                    _this.$el_window.find('.files-tab .files > div:not(.item)').remove();
+                                    // Add the new file incrementally
+                                    await _this.renderItem(result);
+                                    const $newRow = _this.$el_window.find(`.files-tab .files .item[data-uid='${result.uid}']`);
+                                    if ( $newRow.length > 0 ) {
+                                        _this.insertAtSortedPosition($newRow, result);
+                                        _this.applyColumnWidths();
+                                        _this.updateFooterStats();
+                                    }
+                                } else {
+                                    // Same navigate-to-target treatment as New
+                                    // Folder above.
+                                    _this.pushNavHistory(targetPath);
+                                    await _this.renderDirectory(targetPath, { consistency: 'strong' });
+                                }
                                 const $newRow = _this.$el_window.find(`.files-tab .files .item[data-uid='${result.uid}']`);
                                 if ( $newRow.length > 0 ) {
-                                    _this.insertAtSortedPosition($newRow, result);
-                                    _this.applyColumnWidths();
-                                    _this.updateFooterStats();
                                     $newRow.addClass('selected');
                                     window.activate_item_name_editor($newRow[0]);
                                 }
@@ -3428,7 +4072,7 @@ const TabFiles = {
                             // File creation failed silently
                         } finally {
                             window.create_file = origCreateFile;
-                            _this._creatingItem = false;
+                            _this._creatingItem--;
                         }
                     };
                 };
@@ -3459,11 +4103,22 @@ const TabFiles = {
             items.push({
                 html: i18n('paste'),
                 onClick: async function () {
+                    // After the paste completes, refresh and highlight the
+                    // newly created rows — same treatment as uploads. A paste
+                    // into a folder that isn't rendered matches no rows and
+                    // the highlight is a no-op.
+                    let pastedPaths = [];
                     if ( window.clipboard_op === 'copy' ) {
-                        window.copy_clipboard_items(targetPath, null);
+                        pastedPaths = await window.copy_clipboard_items(targetPath, null) ?? [];
                     } else if ( window.clipboard_op === 'move' ) {
-                        await _this.moveClipboardItems(targetPath);
+                        pastedPaths = await _this.moveClipboardItems(targetPath) ?? [];
+                    } else {
+                        return;
                     }
+                    // Refresh so moved-away source rows disappear and any
+                    // items pasted into the current folder show up.
+                    await _this.renderDirectory(_this.currentPath, { consistency: 'strong' });
+                    _this.selectUploadedRows(pastedPaths);
                 },
             });
         }
@@ -3504,6 +4159,19 @@ const TabFiles = {
             },
         });
 
+        // Show hidden files - the same preference the desktop Explorer toggles,
+        // so it stays in sync between the two.
+        items.push({
+            html: i18n('show_hidden'),
+            icon: showHiddenFiles() ? '✓' : '',
+            onClick: function () {
+                window.mutate_user_preferences({
+                    show_hidden_files: ! showHiddenFiles(),
+                });
+                _this.renderDirectory(_this.currentPath);
+            },
+        });
+
         // Empty Trash - only in Trash folder
         if ( isTrashFolder ) {
             items.push('-');
@@ -3511,6 +4179,45 @@ const TabFiles = {
                 html: i18n('empty_trash'),
                 onClick: function () {
                     window.empty_trash();
+                },
+            });
+        }
+
+        // Publish As Website and Properties act on the folder the menu was
+        // opened on, not on the listing's selection. The filesystem root isn't
+        // a real fsentry, and Trash itself only offers Empty Trash — same as
+        // the desktop's folder menus.
+        if ( targetPath !== '/' && ! isTrashFolder ) {
+            const targetName = path.basename(targetPath);
+
+            items.push('-');
+
+            if ( ! isTrashedPath ) {
+                items.push({
+                    html: i18n('publish_as_website'),
+                    onClick: async function () {
+                        // Publishing works off the path, but the uid is what
+                        // refreshes the folder's website badge if its row is on
+                        // screen — the dashboard tracks paths, so look it up.
+                        let uid;
+                        try {
+                            uid = (await puter.fs.stat({ path: targetPath, consistency: 'eventual' }))?.uid;
+                        } catch ( err ) {
+                            // Badge refresh is best-effort; publish still works.
+                        }
+                        await publish_as_website({ uid, name: targetName, path: targetPath });
+                    },
+                });
+            }
+
+            items.push({
+                html: i18n('properties'),
+                onClick: function () {
+                    UIItemPropertiesModal({
+                        name: targetName,
+                        path: targetPath,
+                        $container: _this.$el_window,
+                    });
                 },
             });
         }
@@ -3622,6 +4329,11 @@ const TabFiles = {
             // Disable pointer events on selection actions bar during drag
             _this.$el_window.find('.files-selection-actions').addClass('rubberband-active');
 
+            // The marquee is clamped to the files container but the cursor
+            // isn't — while the drag is active, the chrome around the list
+            // (sidebars, path bar) must not show hover feedback under it.
+            _this.$el_window.find('.dashboard').addClass('rubberband-selecting');
+
             // Create selection area element only when drag actually starts (after threshold)
             selection_area = document.createElement('div');
             $(filesContainer).append(selection_area);
@@ -3688,6 +4400,7 @@ const TabFiles = {
             }
             // Re-enable pointer events on selection actions bar
             _this.$el_window.find('.files-selection-actions').removeClass('rubberband-active');
+            _this.$el_window.find('.dashboard').removeClass('rubberband-selecting');
             _this.updateFooterStats();
         });
     },
@@ -3823,7 +4536,7 @@ const TabFiles = {
                     update_title_based_on_uploads();
                 }
             },
-            success: function (items) {
+            success: async function (items) {
                 const files = [];
                 if ( typeof items[Symbol.iterator] === 'function' ) {
                     for ( const item of items ) {
@@ -3841,8 +4554,11 @@ const TabFiles = {
                 }, 1000);
                 window.show_save_account_notice_if_needed();
                 delete window.active_uploads[opid];
-                // Refresh directory to show uploaded files
-                _this.renderDirectory(_this.currentPath, { consistency: 'strong' });
+                // Refresh directory to show uploaded files, then highlight
+                // them (a drop on a sidebar folder/breadcrumb uploads to a
+                // directory that isn't rendered — no rows match, no-op).
+                await _this.renderDirectory(_this.currentPath, { consistency: 'strong' });
+                _this.selectUploadedRows(files);
             },
             error: async function (err) {
                 const failedItems = Array.isArray(err?.failedItems) ? err.failedItems : [];
@@ -3864,6 +4580,29 @@ const TabFiles = {
                 delete window.active_uploads[opid];
             },
         });
+    },
+
+    /**
+     * Selects the rows matching the given absolute paths, replacing the
+     * current selection. Used after uploads and pastes so the just-created
+     * items land highlighted. Paths outside the rendered directory match no
+     * rows and leave the selection untouched.
+     *
+     * @param {string[]} paths - Absolute paths of the items to select
+     * @returns {void}
+     */
+    selectUploadedRows (paths) {
+        const wanted = new Set(paths.map(p => String(p).toLowerCase()));
+        const matches = this.$el_window.find('.files-tab .files .row').filter(function () {
+            const rowPath = String($(this).attr('data-path') ?? '').toLowerCase();
+            return wanted.has(rowPath);
+        });
+        if ( matches.length === 0 ) return;
+
+        this.$el_window.find('.files-tab .files .row.selected').removeClass('selected');
+        matches.addClass('selected');
+        this.updateFooterStats();
+        matches[0].scrollIntoView({ block: 'nearest' });
     },
 
     /**
@@ -3892,7 +4631,12 @@ const TabFiles = {
                 }
             }
         }
-        let str = `${path_seperator_html}<span class="dirname" data-path="${html_encode('/')}">${html_encode(window.root_dirname)}</span>`;
+        // The root crumb ("Puter") is noise on every path beneath it, so it
+        // only renders at the root itself, where it's all there is to show.
+        // Every crumb keeps its leading caret, including the first.
+        let str = abs_path === '/'
+            ? `${path_seperator_html}<span class="dirname" data-path="${html_encode('/')}">${html_encode(window.root_dirname)}</span>`
+            : '';
         for ( let k = 1; k < dirs.length; k++ ) {
             str += `${path_seperator_html}<span class="dirname" data-path="${html_encode(dirpaths[k])}">${dirs[k] === 'Trash' ? i18n('trash') : html_encode(dirs[k])}</span>`;
         }

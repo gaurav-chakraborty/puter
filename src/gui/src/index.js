@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -55,7 +55,8 @@ window.gui = async (options) => {
     window.api_origin = options.api_origin ?? 'https://api.puter.com';
     window.max_item_name_length = options.max_item_name_length ?? 500;
     window.require_email_verification_to_publish_website = options.require_email_verification_to_publish_website ?? true;
-    window.disable_temp_users = options.disable_temp_users ?? false;
+    // window.disable_temp_users might be set somewhere else, so we need to check if it is already set and if not, use the value from the options
+    window.disable_temp_users = window.disable_temp_users || (options.disable_temp_users ?? false);
     window.co_isolation_enabled = options.co_isolation_enabled;
 
     // DEV: Load the initgui.js file if we are in development mode
@@ -79,8 +80,16 @@ window.gui = async (options) => {
         // await window.loadCSS('/dist/bundle.min.css');
     }
 
-    // Load Cloudflare Turnstile script
-    await window.loadScript('https://challenges.cloudflare.com/turnstile/v0/api.js', { defer: true });
+    // Load the captcha script alongside the GUI rather than ahead of it.
+    // Nothing during boot needs it — the challenge modal polls for the
+    // global and the signup form is opened long after — so awaiting it here
+    // only put a third-party round trip in front of every page load. Skipped
+    // entirely when no site key is configured, since every consumer gates on
+    // one.
+    if ( options.turnstileSiteKey ) {
+        window.loadScript('https://challenges.cloudflare.com/turnstile/v0/api.js', { defer: true })
+            .catch(error => console.debug('Captcha script unavailable:', error));
+    }
 
     // 🚀 Launch the GUI 🚀
     window.initgui(options);

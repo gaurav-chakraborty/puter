@@ -17,7 +17,7 @@
     "clean-css": "^5.3.2",
     "dotenv": "^16.4.5",
     "eslint": "^9.1.1",
-    "express": "^4.18.2",
+    "express": "^5.0.0",
     "globals": "^15.0.0",
     "html-entities": "^2.3.3",
     "jsdom": "^29.0.0",
@@ -29,7 +29,7 @@
   },
   "scripts": {
     "test": "mocha ./test/**/*.test.js",
-    "start=gui": "nodemon --exec \"node dev-server.js\" ",
+    "start:gui": "nodemon --exec \"node dev-server.js\" ",
     "build": "node ./build.js",
     "check-translations": "node tools/check-translations.js",
     "start-webpack": "webpack --watch --devtool source-map --stats=errors-only"
@@ -45,11 +45,15 @@
     ]
   },
   "dependencies": {
+    "@opentelemetry/auto-instrumentations-node": "0.77.0",
+    "@opentelemetry/sdk-node": "0.219.0",
+    "@prelude.so/js-sdk": "0.12.0",
+    "@thumbmarkjs/thumbmarkjs": "1.9.1",
     "file-type": "21.3.3",
     "json-colorizer": "^3.0.1",
-    "mocha": "7.2.0",
     "music-metadata": "11.12.3",
+    "nodemailer": "^9.0.1",
     "string-template": "^1.0.0",
-    "uuid": "^9.0.1"
+    "uuid": "^14.0.0"
   }
 }

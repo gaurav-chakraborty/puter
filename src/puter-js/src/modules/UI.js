@@ -1,6 +1,254 @@
 import EventListener from '../lib/EventListener.js';
+import { hasUserActivation, openAuthPopup } from '../lib/auth-popup.js';
 import FSItem from './FSItem.js';
 import PuterDialog from './PuterDialog.js';
+
+
+/**
+ * A button shown in an `alert()` dialog.
+ *
+ * @typedef {Object} AlertButton
+ * @property {string} label Text displayed on the button.
+ * @property {string} [value] Value returned when this button is pressed. Defaults to `label` if not set.
+ * @property {'primary' | 'success' | 'info' | 'warning' | 'danger'} [type] Visual style of the button.
+ */
+
+/**
+ * Options that configure an `alert()` dialog.
+ *
+ * @typedef {Object} AlertOptions
+ * @property {'primary' | 'success' | 'info' | 'warning' | 'danger'} [type] Visual style of the alert
+ * dialog.
+ * @property {string} [body_icon] Icon URL shown in the dialog body. Takes precedence over `icon`.
+ * @property {string} [icon] Icon URL shown in the dialog body, used when `body_icon` is not set.
+ */
+
+/**
+ * Options that configure a `prompt()` dialog.
+ *
+ * @typedef {Object} PromptOptions
+ * @property {string} [defaultValue] Value the input is pre-filled with.
+ */
+
+/**
+ * A single item in a context menu. The string `'-'` may be used in place of an
+ * item to render a separator.
+ *
+ * @typedef {Object} ContextMenuItem
+ * @property {string} label Text displayed for the menu item.
+ * @property {() => void} [action] Function executed when the item is clicked. Not required for items
+ * with submenus.
+ * @property {string} [icon] Icon shown next to the label. Must be a base64-encoded image data URI
+ * starting with `data:image`; other strings are ignored.
+ * @property {string} [icon_active] Icon shown when the item is hovered or active. Must be a
+ * base64-encoded image data URI starting with `data:image`; other strings are ignored.
+ * @property {boolean} [disabled] If `true`, the item is disabled and unclickable. Defaults to `false`.
+ * @property {(ContextMenuItem | '-')[]} [items] Submenu items. Specifying this creates a submenu.
+ */
+
+/**
+ * A handle to a window created by `createWindow()`.
+ *
+ * @typedef {Object} WindowHandle
+ * @property {string} id Identifier of the window, usable as the `window_id` argument to the
+ * `setWindow*` methods.
+ */
+
+/**
+ * Identifies a window: either a window id string or a window handle returned by
+ * `createWindow()`.
+ *
+ * @typedef {string | WindowHandle} WindowIdentifier
+ */
+
+/**
+ * Options that configure a context menu.
+ *
+ * @typedef {Object} ContextMenuOptions
+ * @property {(ContextMenuItem | '-')[]} items Menu items and separators. Use the string `'-'` to insert
+ * a separator.
+ * @property {'dark' | 'light'} [theme] Forces the rendered menu's color theme. Only applies when
+ * running standalone (`puter.env === 'web'`); ignored inside the Puter desktop (`puter.env === 'app'`).
+ * When unset, the menu follows the system color-scheme preference.
+ * @property {number} [x] X position of the menu, in pixels. Defaults to the cursor position.
+ * Standalone only, with the same caveat as `theme`.
+ * @property {number} [y] Y position of the menu, in pixels. Defaults to the cursor position.
+ * Standalone only, with the same caveat as `theme`.
+ */
+
+/**
+ * Options that configure a window created by `createWindow()`.
+ *
+ * @typedef {Object} WindowOptions
+ * @property {boolean} [center] If `true`, the window is placed at the center of the screen.
+ * @property {string} [content] Content of the window.
+ * @property {boolean} [disable_parent_window] If `true`, the parent window is blocked until this window
+ * is closed.
+ * @property {boolean} [has_head] If `true`, the window has a head containing the icon and close,
+ * minimize, and maximize buttons.
+ * @property {number} [height] Height of the window in pixels.
+ * @property {boolean} [is_resizable] If `true`, the user can resize the window.
+ * @property {boolean} [show_in_taskbar] If `true`, the window is represented in the taskbar.
+ * @property {string} [title] Title of the window.
+ * @property {number} [width] Width of the window in pixels.
+ */
+
+/**
+ * Options that configure `launchApp()`.
+ *
+ * @typedef {Object} LaunchAppOptions
+ * @property {string} [name] Name of the app to launch. If not provided, a new instance of the current
+ * app is launched.
+ * @property {string} [app_name] Legacy spelling of `name`.
+ * @property {Record<string, unknown>} [args] Arguments to pass to the app.
+ * @property {string[]} [file_paths] Paths of existing files to open with the launched app.
+ * @property {FSItem[]} [items] `FSItem` objects to open with the launched app.
+ * @property {string} [pseudonym] A pseudonym to launch the app under.
+ * @property {boolean} [background] If `true`, the app starts with its window hidden, for an app
+ * launched to do work rather than to be looked at. It still appears in the taskbar, so the user can
+ * show it (or close it) at any time, and it can show itself with `puter.ui.showWindow()`.
+ * @property {(connection: AppConnection) => void} [callback]
+ */
+
+/**
+ * Theme data delivered with the `themeChanged` event.
+ *
+ * @typedef {Object} ThemeData
+ * @property {{
+ *     primaryHue: number,
+ *     primarySaturation: string,
+ *     primaryLightness: string,
+ *     primaryAlpha: number,
+ *     primaryColor: string,
+ * }} palette `primaryHue` is the hue of the theme color; `primarySaturation` and `primaryLightness` are
+ * percentage strings including the `%` sign; `primaryAlpha` runs from `0` to `1`; `primaryColor` is a
+ * CSS color value for text.
+ */
+
+/**
+ * A single item in a menubar menu. The string `'-'` may be used in place of an
+ * item to render a separator.
+ *
+ * @typedef {Object} MenuItem
+ * @property {string} label Text displayed for the menu item.
+ * @property {string} [id]
+ * @property {() => void} [action] Function executed when the item is clicked.
+ * @property {(MenuItem | '-')[]} [items] Submenu items.
+ * @property {string} [icon] URL or data URI of an icon shown next to the label.
+ * @property {string} [icon_active] URL or data URI of an icon shown when the item is hovered or active.
+ * Falls back to `icon` if not provided.
+ * @property {boolean} [checked] If `true`, renders a checkmark next to the item. Use for toggleable
+ * options.
+ * @property {boolean} [disabled] If `true`, the item is visible but cannot be clicked.
+ */
+
+/**
+ * Options that configure the menubar set by `setMenubar()`.
+ *
+ * @typedef {Object} MenubarOptions
+ * @property {(MenuItem | '-')[]} items Menu items and separators. Use the string `'-'` to insert a
+ * separator.
+ * @property {'dark' | 'light'} [theme] Forces the rendered menubar's color theme. Only applies when
+ * running standalone (`puter.env === 'web'`); ignored inside the Puter desktop (`puter.env === 'app'`).
+ * When unset, the menubar follows the system color-scheme preference.
+ */
+
+/**
+ * Options that configure `showOpenFilePicker()`.
+ *
+ * @typedef {Object} FilePickerOptions
+ * @property {boolean} [multiple] If `true`, the user can select multiple files. Defaults to `false`.
+ * @property {string | string[]} [accept] MIME types or file extensions accepted by the picker. Defaults
+ * to `*​/*`. For example `'image/*'`, or `['.jpg', '.png']`.
+ * @property {string} [path] Initial directory to open the picker in. Defaults to the user's Desktop.
+ * The special prefix `%appdata%` resolves to the app's private appdata directory.
+ */
+
+/**
+ * Options that configure `showColorPicker()`.
+ *
+ * @typedef {Object} ColorPickerOptions
+ * @property {string} [defaultColor] The color initially selected when the picker opens.
+ */
+
+/**
+ * Options that configure `showFontPicker()`.
+ *
+ * @typedef {Object} FontPickerOptions
+ * @property {string} [defaultFont] The font initially selected when the picker opens.
+ */
+
+/**
+ * Options that configure `showDirectoryPicker()`.
+ *
+ * @typedef {Object} DirectoryPickerOptions
+ * @property {boolean} [multiple] If `true`, the user can select multiple directories. Defaults to
+ * `false`.
+ */
+
+/**
+ * Options that configure a notification shown by `notify()`.
+ *
+ * @typedef {Object} NotificationOptions
+ * @property {string} [title] Title shown in the notification.
+ * @property {string} [text] Body text shown under the title.
+ * @property {string} [icon] Icon URL or Puter icon name (for example `bell.svg`).
+ * @property {'info' | 'success' | 'warning' | 'error' | 'default'} [type] Visual style used to pick a
+ * default icon and accent color when no `icon` is provided.
+ * @property {number} [duration] Time in milliseconds before the notification auto-dismisses. Defaults
+ * to `5000`; set to `0` to keep it until dismissed.
+ * @property {boolean} [round_icon] If `true`, renders the icon as a circle.
+ * @property {boolean} [roundIcon] Alias for `round_icon`.
+ * @property {string} [uid] Optional ID to associate with the notification.
+ * @property {unknown} [value] Optional value stored on the notification element.
+ */
+
+/**
+ * Data passed to the `close` handler on an `AppConnection`.
+ *
+ * @typedef {Object} AppConnectionCloseEvent
+ * @property {string} appInstanceID Instance ID of the app that closed.
+ * @property {number} [statusCode]
+ */
+
+/**
+ * Data passed to the `connection` event handler when another app requests a
+ * connection to your app.
+ *
+ * @typedef {Object} ConnectionEvent
+ * @property {AppConnection} conn Connection to the app that initiated the request.
+ * @property {(value?: unknown) => void} accept Call `accept(value)` to accept the connection; `value`
+ * is sent back to the requester.
+ * @property {(value?: unknown) => void} reject Call `reject(value)` to reject the connection; `value`
+ * is sent back to the requester.
+ */
+
+/**
+ * The outcome the desktop reports back from a `launchApp()` request.
+ *
+ * @typedef {Object} LaunchAppResult
+ * @property {boolean} launched
+ * @property {string | null} [requestedAppName]
+ * @property {string | null} [openedAppName]
+ * @property {string | null} [appInstanceID]
+ * @property {string | null} [appUid]
+ * @property {boolean} [redirectedToFallback]
+ * @property {boolean} [deniedPrivateAccess]
+ * @property {{
+ *     hasAccess: boolean,
+ *     fallbackAppName?: string,
+ *     fallbackArgs?: Record<string, unknown>,
+ *     reason?: string,
+ * }} [privateAccess]
+ */
+
+/**
+ * A promise from a picker that also exposes `undefinedOnCancel`, which
+ * resolves to `undefined` instead of staying pending when the user cancels.
+ *
+ * @template T
+ * @typedef {Promise<T> & { undefinedOnCancel?: Promise<T | undefined> }} CancelAwarePromise
+ */
 
 const createDeferred = () => {
     let resolve;
@@ -15,12 +263,21 @@ const createDeferred = () => {
 const FILE_SAVE_CANCELLED = Symbol('FILE_SAVE_CANCELLED');
 const FILE_OPEN_CANCELLED = Symbol('FILE_OPEN_CANCELLED');
 
-// AppConnection provides an API for interacting with another app.
-// It's returned by UI methods, and cannot be constructed directly by user code.
-// For basic usage:
-// - postMessage(message)        Send a message to the target app
-// - on('message', callback)     Listen to messages from the target app
-class AppConnection extends EventListener {
+// A consent prompt covers a handful of scopes at most, and the popup carries
+// them in its URL.
+const MAX_REQUESTED_PERMISSIONS = 16;
+
+/**
+ * An interface for interacting with another app. Returned by the UI methods
+ * that launch or connect to one; it cannot be constructed directly.
+ *
+ * - `postMessage(message)` sends a message to the target app.
+ * - `on('message', handler)` listens for messages from it.
+ * - `on('close', handler)` fires when it closes.
+ *
+ * @extends {EventListener<{ message: unknown, close: AppConnectionCloseEvent }>}
+ */
+export class AppConnection extends EventListener {
     // targetOrigin for postMessage() calls to Puter
     #puterOrigin = '*';
 
@@ -30,6 +287,14 @@ class AppConnection extends EventListener {
     // Whether the target app uses the Puter SDK, and so accepts messages
     // (Closing and close events will still function.)
     #usesSDK;
+
+    /**
+     * Extra information the target app supplied when the connection was
+     * established. Declared here because `from()` sets it on the instance.
+     *
+     * @type {(Record<string, unknown> & { launchResult?: LaunchAppResult }) | undefined}
+     */
+    response;
 
     static from (values, puter, { messageTarget, appInstanceID }) {
         const connection = new AppConnection(puter, {
@@ -98,12 +363,24 @@ class AppConnection extends EventListener {
         });
     }
 
-    // Does the target app use the Puter SDK? If not, certain features will be unavailable.
+    /**
+     * Whether the target app uses the Puter SDK. If it doesn't, messaging is
+     * unavailable.
+     *
+     * @returns {boolean}
+     */
     get usesSDK () {
         return this.#usesSDK;
     }
 
-    // Send a message to the target app. Requires the target to use the Puter SDK.
+    /**
+     * Sends a message to the target app. Does nothing — beyond a console
+     * warning — if the target isn't using the SDK, or the connection has
+     * already closed.
+     *
+     * @param {unknown} message
+     * @returns {void}
+     */
     postMessage (message) {
         if ( ! this.#isOpen ) {
             console.warn('Trying to post message on a closed AppConnection');
@@ -127,7 +404,13 @@ class AppConnection extends EventListener {
         }, this.#puterOrigin);
     }
 
-    // Attempt to close the target application
+    /**
+     * Attempts to close the target app. An app may close apps it launched
+     * itself; without that permission, or once already closed, this does
+     * nothing beyond a console warning.
+     *
+     * @returns {void}
+     */
     close () {
         if ( ! this.#isOpen ) {
             console.warn('Trying to close an app on a closed AppConnection');
@@ -142,7 +425,18 @@ class AppConnection extends EventListener {
     }
 }
 
-class UI extends EventListener {
+/**
+ * The UI API: tools for creating rich user interfaces and interacting with the
+ * Puter desktop environment, including dialogs, window management, file
+ * pickers, and desktop integration.
+ *
+ * @extends {EventListener<{
+ *     localeChanged: { language: string },
+ *     themeChanged: ThemeData,
+ *     connection: ConnectionEvent,
+ * }>}
+ */
+export class UIModule extends EventListener {
     // Used to generate a unique message id for each message sent to the host environment
     // we start from 1 because 0 is falsy and we want to avoid that for the message id
     #messageID = 1;
@@ -242,6 +536,13 @@ class UI extends EventListener {
         if ( callback ) callback(ret);
         return ret;
     };
+
+    // Read live off the owning instance rather than copied, so it reflects a
+    // sign-in that happens after the module was constructed. UI can't extend
+    // PuterModule because it already extends EventListener.
+    get authToken () {
+        return this.puter.authToken;
+    }
 
     constructor (puter, { appInstanceID, parentInstanceID }) {
         const eventNames = [
@@ -606,10 +907,25 @@ class UI extends EventListener {
         });
     }
 
+    /**
+     * Registers a function to run when the window is about to close. Not
+     * called when the app exits through `puter.exit()`.
+     *
+     * @param {() => void} callback
+     * @returns {void}
+     */
     onWindowClose (callback) {
         this.#onWindowClose = callback;
     };
 
+    /**
+     * Registers a handler for items this app was launched with.
+     *
+     * @deprecated Also fires when items are dropped on the app; handle the
+     * `drop` event instead.
+     * @param {(items: FSItem[]) => void} callback
+     * @returns {void}
+     */
     onItemsOpened (callback) {
         // DEPRECATED - this is also called when items are dropped on the app, which in new versions should be handled
         // with the 'drop' event.
@@ -648,6 +964,12 @@ class UI extends EventListener {
 
     // Check if the app was launched with items
     // This is useful for apps that are launched with items (e.g. when a file is opened with the app)
+    /**
+     * Whether the app was launched to open one or more items — by
+     * double-clicking a file, the 'Open With…' menu, and so on.
+     *
+     * @returns {boolean}
+     */
     wasLaunchedWithItems () {
         const URLParams = new URLSearchParams(globalThis.location.search);
         return URLParams.has('puter.item.name') &&
@@ -655,6 +977,13 @@ class UI extends EventListener {
             URLParams.has('puter.item.read_url');
     };
 
+    /**
+     * Registers a handler called with the items the app was launched with,
+     * each a file or a directory.
+     *
+     * @param {(items: FSItem[]) => void} callback
+     * @returns {void}
+     */
     onLaunchedWithItems (callback) {
         // Check if a file was opened with this app, i.e. check URL parameters of window/iframe
         // Even though the file has been opened when the app is launched, we need to wait for the onLaunchedWithItems callback to be set
@@ -689,57 +1018,164 @@ class UI extends EventListener {
         this.#onLaunchedWithItems = callback;
     };
 
+    /**
+     * Asks the desktop to walk the user through confirming their email.
+     * Resolves once the dialog closes.
+     *
+     * @returns {Promise<unknown>}
+     */
     requestEmailConfirmation () {
         return new Promise((resolve, reject) => {
             this.#postMessageWithCallback('requestEmailConfirmation', resolve, { });
         });
     };
 
+    /**
+     * Shows an alert dialog, blocking the parent window until the user picks a
+     * button. Resolves to that button's `value`, or its `label` when no value
+     * is set. `callback` is vestigial and never invoked.
+     *
+     * @param {string} [message]
+     * @param {AlertButton[]} [buttons]
+     * @param {AlertOptions} [options]
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<string>}
+     */
     alert (message, buttons, options, callback) {
+        if ( this.messageTarget ) {
+            return new Promise((resolve) => {
+                this.#postMessageWithCallback('ALERT', resolve, { message, buttons, options });
+            });
+        }
+        // Standalone fallback: render web component
         return new Promise((resolve) => {
-            this.#postMessageWithCallback('ALERT', resolve, { message, buttons, options });
+            const el = document.createElement('puter-alert');
+            el.setAttribute('message', message || '');
+            el.buttons = buttons;
+            el.options = options;
+            el.addEventListener('response', (e) => resolve(e.detail));
+            document.body.appendChild(el);
+            el.open();
         });
     };
 
+    /**
+     * Opens the developer payments account page. Resolves once the desktop
+     * acknowledges the request.
+     *
+     * @returns {Promise<unknown>}
+     */
     openDevPaymentsAccount () {
         return new Promise((resolve) => {
             this.#postMessageWithCallback('openDevPaymentsAccount', resolve, { });
         });
     }
 
+    /**
+     * Resolves to the instances of this app that are currently open.
+     * `callback` is vestigial and never invoked.
+     *
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     instancesOpen (callback) {
         return new Promise((resolve) => {
             this.#postMessageWithCallback('getInstancesOpen', resolve, { });
         });
     };
 
+    /**
+     * Shows a dialog for sharing a link to social platforms. `callback` is
+     * vestigial and never invoked.
+     *
+     * @param {string} url
+     * @param {string} [message] prefilled post text, where the platform supports it
+     * @param {{ left?: number, top?: number }} [options] dialog position; both default to 0
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     socialShare (url, message, options, callback) {
         return new Promise((resolve) => {
             this.#postMessageWithCallback('socialShare', resolve, { url, message, options });
         });
     };
 
+    /**
+     * Shows a prompt dialog, blocking the parent window until the user
+     * responds. Resolves to the entered value, or `false` if they cancel.
+     * `callback` is vestigial and never invoked.
+     *
+     * @param {string} [message]
+     * @param {string} [placeholder]
+     * @param {{ defaultValue?: string }} [options]
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<string | false>}
+     */
     prompt (message, placeholder, options, callback) {
+        if ( this.messageTarget ) {
+            return new Promise((resolve) => {
+                this.#postMessageWithCallback('PROMPT', resolve, { message, placeholder, options });
+            });
+        }
+        // Standalone fallback: render web component
         return new Promise((resolve) => {
-            this.#postMessageWithCallback('PROMPT', resolve, { message, placeholder, options });
+            const el = document.createElement('puter-prompt');
+            if ( message ) el.setAttribute('message', message);
+            if ( placeholder ) el.setAttribute('placeholder', placeholder);
+            if ( options?.defaultValue ) el.setAttribute('default-value', options.defaultValue);
+            el.options = options;
+            el.addEventListener('response', (e) => resolve(e.detail));
+            document.body.appendChild(el);
+            el.open();
         });
     };
 
+    /**
+     * Shows a desktop notification. Resolves to its uid.
+     *
+     * @param {NotificationOptions} [options]
+     * @returns {Promise<string>}
+     */
     notify (options) {
+        if ( this.messageTarget ) {
+            return new Promise((resolve) => {
+                const normalized = { ...(options ?? {}) };
+                if ( normalized.roundIcon !== undefined && normalized.round_icon === undefined ) {
+                    normalized.round_icon = normalized.roundIcon;
+                }
+                this.#postMessageWithCallback('showNotification', resolve, { options: normalized });
+            });
+        }
+        // Standalone fallback: render web component
         return new Promise((resolve) => {
-            const normalized = { ...(options ?? {}) };
-            if ( normalized.roundIcon !== undefined && normalized.round_icon === undefined ) {
-                normalized.round_icon = normalized.roundIcon;
-            }
-            this.#postMessageWithCallback('showNotification', resolve, { options: normalized });
+            const opts = options ?? {};
+            const el = document.createElement('puter-notification');
+            if ( opts.title ) el.setAttribute('title', opts.title);
+            if ( opts.text ) el.setAttribute('text', opts.text);
+            if ( opts.icon ) el.setAttribute('icon', opts.icon);
+            if ( opts.type ) el.setAttribute('type', opts.type);
+            if ( opts.round_icon || opts.roundIcon ) el.setAttribute('round-icon', '');
+            if ( opts.duration !== undefined ) el.setAttribute('duration', String(opts.duration));
+            el.addEventListener('close', () => resolve(opts.uid || null));
+            document.body.appendChild(el);
+            resolve(opts.uid || null);
         });
     };
 
+    /**
+     * Shows a directory picker over the user's Puter storage. Resolves to one
+     * `FSItem`, or an array of them when multiple selection is allowed.
+     *
+     * @param {{ multiple?: boolean }} [options]
+     * @param {(value: FSItem | FSItem[]) => void} [callback]
+     * @returns {Promise<FSItem | FSItem[]>}
+     */
     showDirectoryPicker (options, callback) {
         return new Promise((resolve, reject) => {
             if ( ! globalThis.open ) {
                 return reject('This API is not compatible in Web Workers.');
             }
+
             const msg_id = this.#messageID++;
             if ( this.env === 'app' ) {
                 this.messageTarget?.postMessage({
@@ -767,12 +1203,23 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * Shows a file picker over the user's Puter storage. Resolves to one
+     * `FSItem`, or an array of them when multiple selection is allowed. The
+     * returned promise also carries `undefinedOnCancel`, which resolves to
+     * `undefined` instead of staying pending when the user cancels.
+     *
+     * @param {{ multiple?: boolean, accept?: string }} [options]
+     * @param {(value: FSItem | FSItem[]) => void} [callback]
+     * @returns {Promise<FSItem | FSItem[]>}
+     */
     showOpenFilePicker (options, callback) {
         const undefinedOnCancel = createDeferred();
         const resolveOnlyPromise = new Promise((resolve, reject) => {
             if ( ! globalThis.open ) {
                 return reject('This API is not compatible in Web Workers.');
             }
+
             const msg_id = this.#messageID++;
 
             if ( this.env === 'app' ) {
@@ -810,30 +1257,87 @@ class UI extends EventListener {
         return resolveOnlyPromise;
     };
 
+    /**
+     * Shows a font picker. Resolves to the chosen font. Accepts either a
+     * default font name or an options object. `default` is a legacy alias for
+     * `defaultFont`.
+     *
+     * @param {string | (FontPickerOptions & { default?: string })} [options]
+     * @returns {Promise<{ fontFamily: string }>}
+     */
     showFontPicker (options) {
+        if ( this.messageTarget ) {
+            return new Promise((resolve) => {
+                this.#postMessageWithCallback('showFontPicker', resolve, { options: options ?? {} });
+            });
+        }
+        // Standalone fallback: render web component
         return new Promise((resolve) => {
-            this.#postMessageWithCallback('showFontPicker', resolve, { options: options ?? {} });
+            const opts = typeof options === 'string' ? { defaultFont: options } : (options ?? {});
+            const el = document.createElement('puter-font-picker');
+            const defaultFont = opts.defaultFont || opts.default || 'System UI';
+            el.setAttribute('default-font', defaultFont);
+            el.addEventListener('response', (e) => resolve(e.detail));
+            document.body.appendChild(el);
+            el.open();
         });
     };
 
+    /**
+     * Shows a color picker. Resolves to the chosen color. Accepts either a
+     * default color or an options object. `default` and `defaultValue` are
+     * legacy aliases for `defaultColor`.
+     *
+     * @param {string | (ColorPickerOptions & { default?: string, defaultValue?: string })} [options]
+     * @returns {Promise<string>}
+     */
     showColorPicker (options) {
+        if ( this.messageTarget ) {
+            return new Promise((resolve) => {
+                this.#postMessageWithCallback('showColorPicker', resolve, { options: options ?? {} });
+            });
+        }
+        // Standalone fallback: render web component
         return new Promise((resolve) => {
-            this.#postMessageWithCallback('showColorPicker', resolve, { options: options ?? {} });
+            const opts = typeof options === 'string' ? { defaultColor: options } : (options ?? {});
+            const el = document.createElement('puter-color-picker');
+            const defaultColor = opts.defaultValue || opts.defaultColor || opts.default || '#3b82f6';
+            el.setAttribute('default-color', defaultColor);
+            el.addEventListener('response', (e) => resolve(e.detail));
+            document.body.appendChild(el);
+            el.open();
         });
     };
 
+    /**
+     * Asks the desktop to show its upgrade flow.
+     *
+     * @returns {Promise<unknown>}
+     */
     requestUpgrade () {
         return new Promise((resolve) => {
             this.#postMessageWithCallback('requestUpgrade', resolve, { });
         });
     };
 
+    /**
+     * Shows a picker for choosing where to save a file, and saves `content`
+     * there. Resolves to the saved `FSItem`; if the user cancels, the promise
+     * stays pending (use `undefinedOnCancel` on it to resolve instead).
+     *
+     * @param {unknown} [content] the data to write; a URL to fetch when `type` is 'url',
+     *   or the path of an existing file when 'move' or 'copy'
+     * @param {string} [suggestedName] name to prefill in the dialog
+     * @param {'url' | 'move' | 'copy'} [type] how `content` is read; inferred as 'url' for a URL
+     * @returns {Promise<FSItem>}
+     */
     showSaveFilePicker (content, suggestedName, type) {
         const undefinedOnCancel = createDeferred();
         const resolveOnlyPromise = new Promise((resolve, reject) => {
             if ( ! globalThis.open ) {
                 return reject('This API is not compatible in Web Workers.');
             }
+
             const msg_id = this.#messageID++;
             if ( !type && Object.prototype.toString.call(content) === '[object URL]' ) {
                 type = 'url';
@@ -854,22 +1358,6 @@ class UI extends EventListener {
                     uuid: msg_id,
                 }, '*');
             } else {
-                window.addEventListener('message', async (e) => {
-                    if ( e.data?.msg === 'sendMeFileData' ) {
-                        // Send the blob URL to the host environment
-                        e.source.postMessage({
-                            msg: 'showSaveFilePickerPopup',
-                            content: url ? undefined : content,
-                            url: url ? url.toString() : undefined,
-                            suggestedName: suggestedName ?? '',
-                            env: this.env,
-                            uuid: msg_id,
-                        }, '*');
-
-                        // remove the event listener
-                        window.removeEventListener('message', this);
-                    }
-                });
                 // Create a Blob from your binary data
                 let blob = new Blob([content], { type: 'application/octet-stream' });
 
@@ -881,11 +1369,39 @@ class UI extends EventListener {
                 let title = 'Puter: Save File';
                 var left = (screen.width / 2) - (w / 2);
                 var top = (screen.height / 2) - (h / 2);
-                window.open(
+
+                // Open the picker popup first so we can bind the data handler to the
+                // exact window we opened. window.open() returns synchronously and the
+                // popup cannot post back until this function yields, so there is no race.
+                const popup = window.open(
                     `${puter.defaultGUIOrigin}/action/show-save-file-picker?embedded_in_popup=true&msg_id=${msg_id}&appInstanceID=${this.appInstanceID}&env=${this.env}&blobUrl=${encodeURIComponent(objectUrl)}`,
                     title,
                     `toolbar=no, location=no, directories=no, status=no, menubar=no, scrollbars=no, resizable=no, copyhistory=no, width=${w}, height=${h}, top=${top}, left=${left}`,
                 );
+
+                // Only hand the file content to the trusted Puter GUI popup we just
+                // opened. Without this, any framing parent or sibling iframe could post
+                // { msg: 'sendMeFileData' } and receive the content the page meant to save.
+                const onSendMeFileData = (e) => {
+                    if ( e.data?.msg !== 'sendMeFileData' ) return;
+                    // Reject anything that isn't our popup on the trusted GUI origin.
+                    if ( e.origin !== puter.defaultGUIOrigin ) return;
+                    if ( ! popup || e.source !== popup ) return;
+
+                    // Send the file data to the popup, targeting the trusted origin only.
+                    e.source.postMessage({
+                        msg: 'showSaveFilePickerPopup',
+                        content: url ? undefined : content,
+                        url: url ? url.toString() : undefined,
+                        suggestedName: suggestedName ?? '',
+                        env: this.env,
+                        uuid: msg_id,
+                    }, puter.defaultGUIOrigin);
+
+                    // The trusted popup has the data; remove this exact listener.
+                    window.removeEventListener('message', onSendMeFileData);
+                };
+                window.addEventListener('message', onSendMeFileData);
             }
             //register callback
             this.#callbackFunctions[msg_id] = (maybe_result) => {
@@ -904,6 +1420,14 @@ class UI extends EventListener {
         return resolveOnlyPromise;
     };
 
+    /**
+     * Sets a window title. `callback` is vestigial and never invoked.
+     *
+     * @param {string} title
+     * @param {string | WindowHandle} [window_id] the window to target; defaults to the app's main window
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     setWindowTitle (title, window_id, callback) {
         if ( typeof window_id === 'function' ) {
             callback = window_id;
@@ -917,6 +1441,14 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * Sets a window's width. Values below 200 are clamped to 200. `callback` is vestigial and never invoked.
+     *
+     * @param {number} width
+     * @param {string | WindowHandle} [window_id] the window to target; defaults to the app's main window
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     setWindowWidth (width, window_id, callback) {
         if ( typeof window_id === 'function' ) {
             callback = window_id;
@@ -930,6 +1462,14 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * Sets a window's height. Values below 200 are clamped to 200. `callback` is vestigial and never invoked.
+     *
+     * @param {number} height
+     * @param {string | WindowHandle} [window_id] the window to target; defaults to the app's main window
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     setWindowHeight (height, window_id, callback) {
         if ( typeof window_id === 'function' ) {
             callback = window_id;
@@ -943,6 +1483,15 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * Sets a window's width and height. Values below 200 are clamped to 200. `callback` is vestigial and never invoked.
+     *
+     * @param {number} width
+     * @param {number} height
+     * @param {string | WindowHandle} [window_id] the window to target; defaults to the app's main window
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     setWindowSize (width, height, window_id, callback) {
         if ( typeof window_id === 'function' ) {
             callback = window_id;
@@ -956,6 +1505,15 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * Moves a window to a position on screen. `callback` is vestigial and never invoked.
+     *
+     * @param {number} x
+     * @param {number} y
+     * @param {string | WindowHandle} [window_id] the window to target; defaults to the app's main window
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     setWindowPosition (x, y, window_id, callback) {
         if ( typeof window_id === 'function' ) {
             callback = window_id;
@@ -969,6 +1527,14 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * Sets a window's vertical position. `callback` is vestigial and never invoked.
+     *
+     * @param {number} y
+     * @param {string | WindowHandle} [window_id] the window to target; defaults to the app's main window
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     setWindowY (y, window_id, callback) {
         if ( typeof window_id === 'function' ) {
             callback = window_id;
@@ -982,6 +1548,14 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * Sets a window's horizontal position. `callback` is vestigial and never invoked.
+     *
+     * @param {number} x
+     * @param {string | WindowHandle} [window_id] the window to target; defaults to the app's main window
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<unknown>}
+     */
     setWindowX (x, window_id, callback) {
         if ( typeof window_id === 'function' ) {
             callback = window_id;
@@ -995,66 +1569,610 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * Shows the app's window.
+     *
+     * @returns {void}
+     */
     showWindow () {
         this.#postMessageWithObject('showWindow');
     };
 
+    /**
+     * Hides the app's window.
+     *
+     * @returns {void}
+     */
     hideWindow () {
         this.#postMessageWithObject('hideWindow');
     };
 
+    /**
+     * Toggles the app's window between shown and hidden.
+     *
+     * @returns {void}
+     */
     toggleWindow () {
         this.#postMessageWithObject('toggleWindow');
     };
 
+    /**
+     * Installs a menubar along the top of the window.
+     *
+     * @param {MenubarOptions} spec
+     * @returns {void}
+     */
     setMenubar (spec) {
-        this.#postMessageWithObject('setMenubar', spec);
+        if ( this.messageTarget ) {
+            this.#postMessageWithObject('setMenubar', spec);
+            return;
+        }
+        // Standalone fallback: render web component
+        // Replace any existing menubar
+        document.querySelectorAll('puter-menubar').forEach(el => el.remove());
+        const el = document.createElement('puter-menubar');
+        // Forward an explicit theme ('dark' | 'light') to the web component;
+        // unset → the component follows the system preference. The component
+        // also forwards this to the dropdowns it spawns. (env=web only.)
+        if ( spec.theme ) el.setAttribute('theme', spec.theme);
+        el.items = spec.items || [];
+        document.body.appendChild(el);
     };
 
+    /**
+     * Asks the user to grant a permission to this app. Inside the Puter GUI
+     * the request is relayed to the desktop; on the web the permission
+     * dialog is shown in a popup window on the Puter origin.
+     *
+     * One prompt may cover several scopes: pass `permissions` instead of
+     * `permission` and the user answers for the whole list at once.
+     *
+     * @param {{ permission?: string, permissions?: string[] }} options
+     * @returns {Promise<boolean>} `true` only if the permission was granted.
+     */
     async requestPermission (options) {
         if ( this.env === 'app' ) {
             const result = await this.#postMessageAsync('requestPermission', { options });
-            return result.granted;
-        } else {
-            // TODO: Implement for web
+            return result.granted === true;
+        }
+
+        // The popup flow is for third-party websites only. In every other
+        // environment it either can't work (workers and node have no window
+        // to open a popup from) or makes no sense — inside the Puter GUI
+        // itself ('gui') the popup would prompt the user to grant this
+        // permission to Puter's own origin. Those callers keep the previous
+        // behavior of resolving false.
+        if ( this.env !== 'web' ) {
             return false;
         }
+        if ( ! globalThis.open || ! globalThis.document ) {
+            return false;
+        }
+        // The popup carries the request in its URL, so cap the list: a link is
+        // attacker-supplied, and an unbounded one could stack an unreadable
+        // consent prompt in front of the user (and overflow the URL).
+        const requested = Array.isArray(options?.permissions)
+            ? options.permissions
+            : [options?.permission];
+        if (
+            requested.length === 0 ||
+            requested.length > MAX_REQUESTED_PERMISSIONS ||
+            requested.some(p => typeof p !== 'string' || p === '')
+        ) {
+            return false;
+        }
+
+        // How long to wait, after the popup is observed closed, for a
+        // decision message that may still be in flight.
+        const CLOSE_GRACE_MS = 1000;
+
+        // The popup's messages arrive tagged with the browser's canonical
+        // serialization of its origin, while `defaultGUIOrigin` is
+        // configuration-supplied text — a trailing slash, an explicit default
+        // port, or a stray path would fail a raw comparison. A dropped message
+        // here doesn't just hang: an unseen `permissionPromptReady` makes the
+        // popup's close read as a severed opener, and an unseen decision then
+        // reports a permission the user granted as denied. Parse once and
+        // compare canonical-to-canonical. A configured origin that can't parse
+        // can't host the prompt at all, so deny up front.
+        let gui_origin;
+        try {
+            gui_origin = new URL(puter.defaultGUIOrigin).origin;
+        } catch (e) {
+            return false;
+        }
+
+        return new Promise((resolve) => {
+            // Unique per request, and not reused across page loads. The counter
+            // alone is a small integer that restarts at 1 on every load, and there
+            // is a window — the whole time the no-gesture consent dialog waits for
+            // its Continue click — where no popup exists yet, so `event.source` is
+            // not pinned and any window on the GUI origin is accepted. A permission
+            // popup left open from before a reload posts exactly this message shape
+            // to its opener on the way out, and its counter value would collide
+            // with a fresh request's, settling it with a decision the user made
+            // about a different permission. The random suffix is what makes the
+            // two impossible to confuse. The GUI echoes the value back verbatim as
+            // a string, which the loose `!=` below compares correctly.
+            const msg_id = `${this.#messageID++}-${Math.random().toString(36).slice(2, 10)}`;
+            // Repeated `permission=` params rather than a JSON blob, so the GUI
+            // reads a list of plain strings with no parsing step to get wrong.
+            const query = requested
+                .map(p => `permission=${encodeURIComponent(p)}`)
+                .join('&');
+            const url = `${gui_origin}/action/request-permission?embedded_in_popup=true&msg_id=${encodeURIComponent(msg_id)}&${query}`;
+
+            // Guards against settling more than once across the message,
+            // popup-closed, and dialog-cancel code paths.
+            let settled = false;
+            // Interval id for polling whether the user closed the popup.
+            let checkClosed = null;
+            // The popup we opened; pinned as the expected `event.source`.
+            let popupWindow = null;
+            // The consent dialog, when the no-gesture path had to create one.
+            let consentDialog = null;
+            // Set when the popup announces itself, which it can only do while
+            // the opener relationship is intact. See the `closed` handler.
+            let promptReady = false;
+
+            const cleanup = () => {
+                if ( checkClosed ) {
+                    clearInterval(checkClosed);
+                    checkClosed = null;
+                }
+                window.removeEventListener('message', messageHandler);
+                // Once answered the dialog is inert; leaving it appended would
+                // stack one dead element per request for the page's lifetime.
+                consentDialog?.remove();
+                consentDialog = null;
+            };
+
+            const settle = (granted) => {
+                if ( settled ) return;
+                settled = true;
+                cleanup();
+                resolve(granted);
+            };
+
+            const messageHandler = (e) => {
+                // Only accept the decision from the Puter GUI origin AND from
+                // the popup we opened. Origin alone is insufficient (any frame
+                // on the GUI domain could post), so also pin event.source.
+                // msg_id binds the message to this request.
+                if ( e.origin !== gui_origin ) return;
+                if ( popupWindow && e.source !== popupWindow ) return;
+                if ( e.data?.original_msg_id != msg_id ) return;
+                // The popup reporting that it is up and can reach us. Carries
+                // no decision — it only tells the `closed` handler below which
+                // kind of window it is looking at.
+                if ( e.data?.msg === 'permissionPromptReady' ) {
+                    promptReady = true;
+                    return;
+                }
+                if ( e.data?.msg !== 'permissionGranted' ) return;
+                settle(e.data.granted === true);
+            };
+            window.addEventListener('message', messageHandler);
+
+            // Once the popup exists, watch for the user closing it without
+            // answering. `popup` is null if the browser blocked it.
+            const watchPopup = (popup) => {
+                if ( settled ) return;
+                if ( ! popup ) {
+                    settle(false);
+                    return;
+                }
+                // Pin the expected event.source before anything can return
+                // early: until this is set the message handler accepts a
+                // decision from any window on the GUI origin, and the wait for
+                // the consent dialog's Continue click is user-paced.
+                popupWindow = popup;
+                // A severed opener relationship means the popup can't
+                // postMessage back and `popup.closed` tells us nothing about
+                // the window the user is looking at — it reads `true` for a
+                // detached proxy. Poll the permission check instead (mirrors
+                // signIn's /login/wait fallback), giving up after a timeout.
+                // `crossOriginIsolated` alone misses this: COOP severs the
+                // relationship on its own, while being isolated also requires
+                // COEP.
+                if ( window.crossOriginIsolated || popup.closed ) {
+                    pollDecision();
+                    return;
+                }
+                // `closed` read right after `window.open()` cannot see COOP
+                // severing yet: the popup is still the initial about:blank in
+                // this browsing-context group, and the group is only swapped
+                // when the navigation to the Puter origin *commits*. So
+                // severing shows up here, in the poll, as `closed` flipping
+                // true — indistinguishable, by itself, from the user closing
+                // the window.
+                //
+                // The two are told apart by whether the popup ever announced
+                // itself: that message can only arrive while the opener
+                // relationship is intact, so having seen it proves a close is a
+                // real close and the answer is now. Never having seen it means
+                // the channel may be severed, with the prompt live in a window
+                // that cannot answer — reporting a denial there would tell the
+                // site "denied" while the user goes on to click Allow and commit
+                // the grant, so the decision is read back from the server
+                // instead. Elapsed time cannot stand in for this: a slow popup
+                // navigation commits the severing whenever it commits.
+                checkClosed = setInterval(() => {
+                    if ( ! popup.closed ) return;
+                    clearInterval(checkClosed);
+                    checkClosed = null;
+                    const severed = ! promptReady;
+                    // The GUI posts the decision and then closes the popup,
+                    // and cross-process postMessage delivery is not ordered
+                    // relative to `closed` becoming true. Give an in-flight
+                    // decision message its grace period before acting on the
+                    // close — on either branch, since a real answer already on
+                    // its way outranks whatever the close is taken to mean.
+                    setTimeout(() => {
+                        if ( settled ) return;
+                        if ( severed ) {
+                            // The decision can still be read back from the
+                            // server. A denial can't (nothing is written for
+                            // it), so this only ends early on a grant —
+                            // otherwise it waits out the poll timeout before
+                            // answering false.
+                            pollDecision();
+                            return;
+                        }
+                        settle(false);
+                    }, CLOSE_GRACE_MS);
+                }, 100);
+            };
+
+            const pollDecision = async () => {
+                const POLL_INTERVAL_MS = 2000;
+                const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+                // Per-attempt budget, generous enough that a slow-but-working
+                // connection still gets an answer, short enough that the deadline
+                // below stays meaningful.
+                const POLL_REQUEST_TIMEOUT_MS = 10000;
+                // The check needs this site's own token, and a permission popup
+                // deliberately never hands one over. Without it every iteration
+                // would skip the request and the loop would just burn its whole
+                // timeout before answering — so answer now.
+                if ( ! puter.authToken ) {
+                    settle(false);
+                    return;
+                }
+                const started = Date.now();
+                while ( ! settled && Date.now() - started < POLL_TIMEOUT_MS ) {
+                    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+                    if ( settled ) return;
+                    if ( ! puter.authToken ) continue;
+                    // Time-box each attempt. The loop only re-reads the clock
+                    // between iterations, so a request that never settles — a
+                    // stalled connection, a proxy that accepts and never replies
+                    // — parks this `await` forever: POLL_TIMEOUT_MS is never
+                    // reached, `settle` is never called, and the caller's promise
+                    // stays pending for the life of the page with the listener
+                    // still attached. The popup is already closed on this branch,
+                    // so nothing the user does can recover it.
+                    const controller = typeof AbortController !== 'undefined'
+                        ? new AbortController()
+                        : null;
+                    const attempt_timer = setTimeout(
+                        () => controller?.abort(),
+                        POLL_REQUEST_TIMEOUT_MS,
+                    );
+                    try {
+                        const resp = await fetch(`${puter.APIOrigin}/auth/check-permissions`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${puter.authToken}`,
+                            },
+                            body: JSON.stringify({ permissions: [permission] }),
+                            ...(controller ? { signal: controller.signal } : {}),
+                        });
+                        if ( ! resp.ok ) continue;
+                        const data = await resp.json();
+                        if ( data?.permissions?.[permission] === true ) {
+                            settle(true);
+                        }
+                    } catch (e) {
+                        // Transient network failure, or this attempt's abort; keep
+                        // polling until the deadline above is reached.
+                    } finally {
+                        // Runs on the `continue` paths too.
+                        clearTimeout(attempt_timer);
+                    }
+                }
+                settle(false);
+            };
+
+            // Every path out of here resolves a boolean, so anything that
+            // throws while launching — `window.open` refused outright by a
+            // policy or an override rather than returning null, a dialog that
+            // won't construct, no `document.body` yet because this was called
+            // from a <head> script — has to deny rather than reject.
+            try {
+                if ( hasUserActivation() ) {
+                    // A user gesture is active — open the popup immediately.
+                    // Unique window name per request: window.open() reuses a
+                    // window with the same name, which would hijack a popup an
+                    // earlier, still-pending request is waiting on.
+                    watchPopup(openAuthPopup(url, `puter-permission-${msg_id}`));
+                } else {
+                    // No user gesture: a popup opened now would be blocked by
+                    // the browser. Show a consent dialog first; the popup is
+                    // then opened from the user's click on that dialog, which
+                    // provides the gesture the browser requires.
+                    const dialog = new PuterDialog(() => {}, () => {}, {
+                        popupURL: url,
+                        // Same unique-name reasoning as the direct path above.
+                        popupName: `puter-permission-${msg_id}`,
+                        onLaunch: (popup) => watchPopup(popup),
+                        onCancel: () => settle(false),
+                    });
+                    consentDialog = dialog;
+                    document.body.appendChild(dialog);
+                    dialog.open();
+                }
+            } catch (e) {
+                // `settle` runs cleanup, so the message listener is dropped too.
+                settle(false);
+            }
+        });
     };
 
+    /**
+     * Opens a dialog the user can use to send feedback to this app's
+     * developer. The message is delivered by Puter (stored and emailed to the
+     * developer); it never passes through the app. Requires the developer to
+     * have opted in by setting `feedbackEnabled` on the app — otherwise the
+     * dialog tells the user feedback is unavailable.
+     *
+     * In the `app` environment the Puter desktop renders the dialog; in the
+     * `web` environment a puter.com popup hosts it (signing the user in first
+     * if needed). Every other environment resolves `false`.
+     *
+     * @returns {Promise<boolean>} `true` when the user submitted feedback,
+     *   `false` when the dialog was dismissed or feedback is unavailable.
+     *   Never rejects. On a cross-origin-isolated page COOP severs the
+     *   popup's link to the opener, so the promise resolves `false` while
+     *   the popup stays open and the user may still submit — `false` means
+     *   "not confirmed", not "not sent".
+     */
+    async showFeedbackDialog () {
+        if ( this.env === 'app' ) {
+            // The host GUI advertises the IPC dialogs it can answer via
+            // `puter.gui_features` on the app iframe's URL (see
+            // launch_app.js). A GUI that predates this feature has no
+            // handler for the message and would never reply, hanging this
+            // never-rejecting promise forever — and a reply timeout can't
+            // stand in for the check, because a legitimate reply only
+            // arrives when the user closes the dialog.
+            const features = new URLSearchParams(globalThis.location?.search ?? '')
+                .get('puter.gui_features')?.split(',') ?? [];
+            if ( ! features.includes('feedback-dialog') ) {
+                return false;
+            }
+            const result = await this.#postMessageAsync('showFeedbackDialog', {});
+            return result?.sent === true;
+        }
+
+        // The popup flow is for third-party websites only. In every other
+        // environment it either can't work (workers and node have no window
+        // to open a popup from) or makes no sense. Those callers resolve
+        // false rather than reject — dialogs are resolve-only.
+        if ( this.env !== 'web' ) {
+            return false;
+        }
+        if ( ! globalThis.open || ! globalThis.document ) {
+            return false;
+        }
+
+        // See requestPermission: canonical-to-canonical origin comparison. A
+        // configured origin that can't parse can't host the dialog at all.
+        let gui_origin;
+        try {
+            gui_origin = new URL(puter.defaultGUIOrigin).origin;
+        } catch (e) {
+            return false;
+        }
+
+        // How long to wait, after the popup is observed closed, for a result
+        // message that may still be in flight.
+        const CLOSE_GRACE_MS = 1000;
+
+        return new Promise((resolve) => {
+            // Unique per request and not reused across page loads — same
+            // stale-popup collision reasoning as requestPermission. The app's
+            // identity is deliberately NOT in this URL: the GUI derives it
+            // from the browser-attested opener origin, so a link can't open a
+            // feedback dialog in another app's name.
+            const msg_id = `${this.#messageID++}-${Math.random().toString(36).slice(2, 10)}`;
+            const url = `${gui_origin}/action/send-feedback?embedded_in_popup=true&msg_id=${encodeURIComponent(msg_id)}`;
+
+            // Guards against settling more than once across the message,
+            // popup-closed, and dialog-cancel code paths.
+            let settled = false;
+            let checkClosed = null;
+            let popupWindow = null;
+            let consentDialog = null;
+
+            const cleanup = () => {
+                if ( checkClosed ) {
+                    clearInterval(checkClosed);
+                    checkClosed = null;
+                }
+                window.removeEventListener('message', messageHandler);
+                consentDialog?.remove();
+                consentDialog = null;
+            };
+
+            const settle = (sent) => {
+                if ( settled ) return;
+                settled = true;
+                cleanup();
+                resolve(sent === true);
+            };
+
+            const messageHandler = (e) => {
+                // Only accept the result from the Puter GUI origin AND from
+                // the popup we opened; msg_id binds it to this request. The
+                // GUI echoes msg_id back as a string, which the loose `!=`
+                // compares correctly.
+                if ( e.origin !== gui_origin ) return;
+                if ( popupWindow && e.source !== popupWindow ) return;
+                if ( e.data?.original_msg_id != msg_id ) return;
+                if ( e.data?.msg !== 'feedbackDialogClosed' ) return;
+                settle(e.data.sent === true);
+            };
+            window.addEventListener('message', messageHandler);
+
+            const watchPopup = (popup) => {
+                if ( settled ) return;
+                if ( ! popup ) {
+                    settle(false);
+                    return;
+                }
+                // Pin the expected event.source before anything can return
+                // early.
+                popupWindow = popup;
+                // A severed opener relationship (COOP) means the popup can't
+                // post the result back and `popup.closed` tells us nothing.
+                // Unlike a permission grant, a feedback submission can't be
+                // read back from the server, so the outcome is unknowable
+                // here: report false now rather than hang. The popup stays
+                // open — the user can still send their feedback.
+                if ( window.crossOriginIsolated || popup.closed ) {
+                    settle(false);
+                    return;
+                }
+                checkClosed = setInterval(() => {
+                    if ( ! popup.closed ) return;
+                    clearInterval(checkClosed);
+                    checkClosed = null;
+                    // The GUI posts the result and then closes the popup, and
+                    // cross-process postMessage delivery is not ordered
+                    // relative to `closed` becoming true — give an in-flight
+                    // result its grace period before treating the close as a
+                    // dismissal.
+                    setTimeout(() => settle(false), CLOSE_GRACE_MS);
+                }, 100);
+            };
+
+            // Every path out of here resolves a boolean, so anything that
+            // throws while launching has to resolve false rather than reject.
+            try {
+                if ( hasUserActivation() ) {
+                    // Unique window name per request: window.open() reuses a
+                    // window with the same name, which would hijack a popup an
+                    // earlier, still-pending request is waiting on.
+                    watchPopup(openAuthPopup(url, `puter-feedback-${msg_id}`));
+                } else {
+                    // No user gesture: a popup opened now would be blocked.
+                    // Show a consent dialog first; the popup is then opened
+                    // from the user's click on it.
+                    const dialog = new PuterDialog(() => {}, () => {}, {
+                        popupURL: url,
+                        popupName: `puter-feedback-${msg_id}`,
+                        onLaunch: (popup) => watchPopup(popup),
+                        onCancel: () => settle(false),
+                    });
+                    consentDialog = dialog;
+                    document.body.appendChild(dialog);
+                    dialog.open();
+                }
+            } catch (e) {
+                settle(false);
+            }
+        });
+    };
+
+    /**
+     * Greys out a menubar item so it cannot be clicked.
+     *
+     * @param {string} item_id
+     * @returns {void}
+     */
     disableMenuItem (item_id) {
         this.#postMessageWithObject('disableMenuItem', { id: item_id });
     };
 
+    /**
+     * Re-enables a menubar item disabled with `disableMenuItem`.
+     *
+     * @param {string} item_id
+     * @returns {void}
+     */
     enableMenuItem (item_id) {
         this.#postMessageWithObject('enableMenuItem', { id: item_id });
     };
 
+    /**
+     * Sets a menubar item's icon. Must be a `data:image` URI.
+     *
+     * @param {string} item_id
+     * @param {string} icon
+     * @returns {void}
+     */
     setMenuItemIcon (item_id, icon) {
         this.#postMessageWithObject('setMenuItemIcon', { id: item_id, icon: icon });
     };
 
+    /**
+     * Sets the icon a menubar item shows while hovered or active. Must be a
+     * `data:image` URI.
+     *
+     * @param {string} item_id
+     * @param {string} icon
+     * @returns {void}
+     */
     setMenuItemIconActive (item_id, icon) {
         this.#postMessageWithObject('setMenuItemIconActive', { id: item_id, icon: icon });
     };
 
+    /**
+     * Shows or clears the check mark on a menubar item.
+     *
+     * @param {string} item_id
+     * @param {boolean} checked
+     * @returns {void}
+     */
     setMenuItemChecked (item_id, checked) {
         this.#postMessageWithObject('setMenuItemChecked', { id: item_id, checked: checked });
     };
 
+    /**
+     * Opens a context menu at the pointer. Item actions run on click.
+     *
+     * @param {ContextMenuOptions} spec
+     * @returns {void}
+     */
     contextMenu (spec) {
-        this.#postMessageWithObject('contextMenu', spec);
+        if ( this.messageTarget ) {
+            this.#postMessageWithObject('contextMenu', spec);
+            return;
+        }
+        // Standalone fallback: render web component
+        const el = document.createElement('puter-context-menu');
+        // Forward an explicit theme ('dark' | 'light') to the web component;
+        // unset → the component follows the system preference. The component
+        // also forwards this to any submenus it spawns. (env=web only.)
+        if ( spec.theme ) el.setAttribute('theme', spec.theme);
+        el.items = spec.items || [];
+        // Use mouse position or provided position
+        const x = spec.x ?? (globalThis.event?.clientX ?? 0);
+        const y = spec.y ?? (globalThis.event?.clientY ?? 0);
+        el.setAttribute('x', String(x));
+        el.setAttribute('y', String(y));
+        document.body.appendChild(el);
     };
 
     /**
      * Asynchronously extracts entries from DataTransferItems, like files and directories.
      *
-     * @private
-     * @function
-     * @async
      * @param {DataTransferItemList} dataTransferItems - List of data transfer items from a drag-and-drop operation.
      * @param {Object} [options={}] - Optional settings.
      * @param {boolean} [options.raw=false] - Determines if the file path should be processed.
-     * @returns {Promise<Array<File|Entry>>} - A promise that resolves to an array of File or Entry objects.
+     * @returns {Promise<Array<File|FileSystemEntry>>} - A promise that resolves to an array of File or FileSystemEntry objects.
      * @throws {Error} - Throws an error if there's an EncodingError and provides information about how to solve it.
      *
      * @example
@@ -1145,6 +2263,12 @@ class UI extends EventListener {
         return files;
     };
 
+    /**
+     * Asks the user to authenticate with their Puter account. Resolves once
+     * they have; rejects if they cancel. Most APIs call this for you.
+     *
+     * @returns {Promise<void>}
+     */
     authenticateWithPuter () {
         if ( this.env !== 'web' ) {
             return;
@@ -1168,30 +2292,80 @@ class UI extends EventListener {
         puter.puterAuthState.isPromptOpen = true;
         puter.puterAuthState.authGranted = null;
 
-        return new Promise((resolve, reject) => {
-            if ( ! puter.authToken ) {
-                const puterDialog = new PuterDialog(resolve, reject);
-                document.body.appendChild(puterDialog);
-                puterDialog.open();
-            } else {
-                // If authToken is already present, resolve immediately
-                resolve();
+        // Hand off to `signIn()` rather than opening a second sign-in popup of
+        // our own. It is the same flow with the parts this one never grew:
+        // it opens the popup directly when a user gesture is available (and
+        // falls back to the consent dialog to obtain one when not), notices the
+        // user closing the popup, and — on a cross-origin-isolated page, where
+        // COOP severs `window.opener` so no `puter.token` message can ever come
+        // back — collects the token from the `/login/set` → `/login/wait` relay
+        // instead. Without that last part implicit auth could not complete at
+        // all on an isolated page: every `puter.ai.chat()` / `puter.fs.*` call
+        // opened a popup that had no way to return anything, while an explicit
+        // `puter.auth.signIn()` worked.
+        //
+        // `signIn` adopts the token itself, so all that is left here is
+        // settling the shared prompt state and anything queued behind it.
+        const settle = (granted) => {
+            puter.puterAuthState.authGranted = granted;
+            puter.puterAuthState.isPromptOpen = false;
+            const resolver = puter.puterAuthState.resolver;
+            puter.puterAuthState.resolver = null;
+            if ( resolver ) {
+                if ( granted ) {
+                    resolver.resolve();
+                } else {
+                    resolver.reject();
+                }
             }
-        });
+        };
+
+        // `request_auth` keeps the one behaviour the popup this replaced had
+        // that a plain `signIn()` does not: with more than one account signed
+        // in, the user gets to re-pick even if this site already holds a token
+        // for them.
+        return puter.auth.signIn({ request_auth: true }).then(
+            () => {
+                settle(true);
+                if ( puter.onAuth && typeof puter.onAuth === 'function' ) {
+                    puter.getUser().then((user) => {
+                        puter.onAuth(user);
+                    });
+                }
+            },
+            (err) => {
+                settle(false);
+                throw err;
+            },
+        );
     };
 
-    // Returns a Promise<AppConnection>
     /**
-     * launchApp opens the specified app in Puter with the specified argumets.
-     * @param {*} nameOrOptions - name of the app as a string, or an options object
-     * @param {*} args - named parameters that will be passed to the app as arguments
-     * @param {*} callback - in case you don't want to use `await` or `.then()`
-     * @returns
+     * @overload
+     * @param {LaunchAppOptions} options
+     * @returns {Promise<AppConnection>}
+     */
+    /**
+     * @overload
+     * @param {string} [appName]
+     * @param {Record<string, unknown>} [args]
+     * @param {(connection: AppConnection) => void} [callback]
+     * @returns {Promise<AppConnection>}
+     */
+    /**
+     * Opens the named app in Puter with the given arguments, or takes a single
+     * options object. Resolves to a connection to the launched app.
+     *
+     * @param {string | LaunchAppOptions} [nameOrOptions]
+     * @param {Record<string, unknown>} [args]
+     * @param {(connection: AppConnection) => void} [callback]
+     * @returns {Promise<AppConnection>}
      */
     launchApp = async function launchApp (nameOrOptions, args, callback) {
         let pseudonym = undefined;
         let file_paths = undefined;
         let items = undefined;
+        let background = undefined;
         let app_name = nameOrOptions; // becomes string after branch below
 
         // Handle case where app_name is an options object
@@ -1203,6 +2377,7 @@ class UI extends EventListener {
             callback = callback || options.callback;
             pseudonym = options.pseudonym;
             items = options.items;
+            background = options.background;
         }
 
         if ( items ) {
@@ -1229,6 +2404,7 @@ class UI extends EventListener {
                 items,
                 pseudonym,
                 args,
+                background,
             },
         });
 
@@ -1252,10 +2428,24 @@ class UI extends EventListener {
         });
     };
 
+    /**
+     * The connection to the app that launched this one, or `null` when there
+     * is no parent app.
+     *
+     * @returns {AppConnection | null}
+     */
     parentApp () {
         return this.#parentAppConnection;
     }
 
+    /**
+     * Creates and shows a window. Resolves to a handle whose `id` the
+     * `setWindow*` methods accept. `callback` is vestigial and never invoked.
+     *
+     * @param {WindowOptions} [options]
+     * @param {unknown} [callback] ignored
+     * @returns {Promise<WindowHandle>}
+     */
     createWindow (options, callback) {
         return new Promise((resolve) => {
             this.#postMessageWithCallback('createWindow', (res) => {
@@ -1492,6 +2682,36 @@ class UI extends EventListener {
         }));
     };
 
+    /**
+     * @overload
+     * @param {'localeChanged'} eventName
+     * @param {(data: { language: string }) => void} callback
+     * @returns {undefined}
+     */
+    /**
+     * @overload
+     * @param {'themeChanged'} eventName
+     * @param {(data: ThemeData) => void} callback
+     * @returns {undefined}
+     */
+    /**
+     * @overload
+     * @param {'connection'} eventName
+     * @param {(data: ConnectionEvent) => void} callback
+     * @returns {undefined}
+     */
+    /**
+     * Listens for a broadcast from Puter. A broadcast that already happened is
+     * replayed to the handler immediately with its most recent value.
+     *
+     * - `localeChanged` — on startup and when the user's locale changes.
+     * - `themeChanged` — on startup and when the desktop theme changes.
+     * - `connection` — when another app asks to connect to this one.
+     *
+     * @param {string} eventName
+     * @param {(data: unknown) => void} callback
+     * @returns {undefined}
+     */
     on (eventName, callback) {
         super.on(eventName, callback);
         // If we already received a broadcast for this event, run the callback immediately
@@ -1503,6 +2723,13 @@ class UI extends EventListener {
     #showTime = null;
     #hideTimeout = null;
 
+    /**
+     * Covers the screen with a spinner overlay. Nested calls share one
+     * spinner, which goes away once every caller has hidden it.
+     *
+     * @param {string} [html] message under the spinner; defaults to "Working..."
+     * @returns {void}
+     */
     showSpinner (html) {
         if ( this.#overlayActive ) return;
 
@@ -1588,6 +2815,11 @@ class UI extends EventListener {
         }, 1000);
     }
 
+    /**
+     * Hides the spinner shown by `showSpinner`.
+     *
+     * @returns {void}
+     */
     hideSpinner () {
         if ( ! this.#overlayActive ) return;
 
@@ -1653,5 +2885,20 @@ class UI extends EventListener {
         });
     }
 }
+
+/**
+ * The public face of the module: derived from the class, with the internal
+ * `puter` handle, the legacy `authToken` accessor, and the desktop plumbing
+ * omitted.
+ *
+ * @typedef {import('../lib/types.js').OmitMembers<
+ *     typeof UIModule,
+ *     'puter' | 'authToken' | 'util' | 'messageTarget'
+ *     | 'itemWatchCallbackFunctions' | 'appInstanceID' | 'parentInstanceID'
+ *     | 'mouseX' | 'mouseY'
+ * >} UIConstructor
+ */
+
+export const UI = /** @type {UIConstructor} */ (UIModule);
 
 export default UI;

@@ -15,8 +15,12 @@ Various object types and classes that represent different entities in the Puter 
 - **[FSItem](/Objects/fsitem/)** - Represents a file or directory
 - **[KVPair](/Objects/kvpair/)** - Represents a key-value pair
 - **[MonthlyUsage](/Objects/monthlyusage/)** - Represents user's monthly resource usage information
+- **[PuterPeerConnection](/Objects/puterpeerconnection/)** - Represents a data-channel connection to a peer
+- **[PuterPeerServer](/Objects/puterpeerserver/)** - Represents a peer server and its connected clients
 - **[Speech2TxtResult](/Objects/speech2txtresult/)** - Represents speech-to-text transcription results
 - **[Subdomain](/Objects/subdomain/)** - Represents a subdomain
+- **[TTSEngine](/Objects/ttsengine/)** - Represents an available text-to-speech engine/model
+- **[TTSVoice](/Objects/ttsvoice/)** - Represents an available text-to-speech voice
 - **[ToolCall](/Objects/toolcall/)** - Represents a tool invocation request
 - **[User](/Objects/user/)** - Represents a Puter user
 - **[WorkerDeployment](/Objects/workerdeployment/)** - Represents a worker deployment result

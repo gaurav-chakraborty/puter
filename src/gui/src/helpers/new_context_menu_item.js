@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -19,6 +19,7 @@
 
 import UIPrompt from '../UI/UIPrompt.js';
 import UIAlert from '../UI/UIAlert.js';
+import { createWeblinkData, defaultWeblinkIcon } from './weblink.js';
 
 /**
  * Returns a context menu item to create a new folder and a variety of file types.
@@ -60,7 +61,7 @@ const new_context_menu_item = function (dirname, append_to_element) {
         // Web Link
         {
             html: 'Web Link',
-            icon: `<img src="${html_encode(window.icons['link.svg'])}" class="ctx-item-icon">`,
+            icon: `<img src="${html_encode(window.icons['link.svg'])}" class="ctx-item-icon ctx-item-icon-monochrome">`,
             onClick: async function () {
                 // Prompt user for URL
                 const url = await UIPrompt({
@@ -93,20 +94,14 @@ const new_context_menu_item = function (dirname, append_to_element) {
                         let linkName = siteName;
                         let fileName = `${linkName }.weblink`;
 
-                        // Store the URL in a simple JSON object
-                        const weblink_content = JSON.stringify({
+                        const icon = defaultWeblinkIcon();
+                        const weblink_content = JSON.stringify(createWeblinkData({
                             url: url,
-                            type: 'weblink',
                             domain: domain,
-                            created: Date.now(),
-                            modified: Date.now(),
-                            version: '2.0',
-                            metadata: {
-                                originalUrl: url,
-                                linkName: linkName,
-                                simpleName: siteName,
-                            },
-                        });
+                            linkName: linkName,
+                            simpleName: siteName,
+                            icon: icon,
+                        }));
 
                         // Create the file with standard link icon
                         const item = await window.create_file({
@@ -114,17 +109,17 @@ const new_context_menu_item = function (dirname, append_to_element) {
                             append_to_element: append_to_element,
                             name: fileName,
                             content: weblink_content,
-                            icon: window.icons['link.svg'],
+                            icon: icon,
                             type: 'weblink',
                             metadata: JSON.stringify({
                                 url: url,
                                 domain: domain,
                                 timestamp: Date.now(),
-                                version: '2.0',
+                                version: '2.1',
                             }),
                             html_attributes: {
                                 'data-weblink': 'true',
-                                'data-icon': window.icons['link.svg'],
+                                'data-icon': icon,
                                 'data-url': url,
                                 'data-domain': domain,
                                 'data-display-name': linkName,
@@ -163,8 +158,12 @@ const new_context_menu_item = function (dirname, append_to_element) {
                 await window.create_file({
                     dirname: dirname,
                     append_to_element: append_to_element,
-                    name: 'New Worker.js',
-                    content: `// This is an example application for Puter Workers
+                    name: 'New Worker.worker.js',
+                    content: `/// <reference types="@heyputer/worker-types" />
+// This is an example application for Puter Workers.
+// The reference above gives editors like VS Code autocomplete for the
+// \`router\`, \`me\`, and other globals injected by the Workers runtime.
+// Install the types with: npm install --save-dev @heyputer/worker-types
 
 router.get('/', ({request}) => {
     return 'Hello World'; // returns a string

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2024-present Puter Technologies Inc.
  *
  * This file is part of Puter.
@@ -138,7 +138,7 @@ async function UIWindowSearch (options) {
                         data-is_dir="${html_encode(result.is_dir)}"
                     >`;
                 // icon
-                h += `<img src="${(await item_icon(result)).image}" style="width: 20px; height: 20px; margin-right: 6px;">`;
+                h += `<img src="${html_encode((await item_icon(result)).image)}" style="width: 20px; height: 20px; margin-right: 6px;">`;
                 h += html_encode(result.name);
                 h += '</div>';
             }
@@ -195,9 +195,9 @@ $(document).on('click', '.search-result', async function (e) {
                 'Authorization': `Bearer ${window.auth_token}`,
             },
             statusCode: {
-                401: function () {
-                    window.logout();
-                },
+                401: function (xhr) {
+                        window.handle401(xhr);
+                    },
             },
         });
     } catch ( err ) {
